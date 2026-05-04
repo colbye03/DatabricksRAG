@@ -607,16 +607,6 @@ Strong phrase to use:
 - Fabric and Power BI scripts preserve product metadata for future filtering, ranking, or unified-index migration.
 - The live app should select retrieval targets by product route rather than querying one mixed corpus blindly.
 
-## Future Improvements
-
-- Add app source code and deployment scripts to this repo.
-- Add an orchestration notebook or Lakeflow job that refreshes all three corpora in order.
-- Add CI/CD checks for notebook syntax and table/index configuration drift.
-- Add a small manifest file that records each corpus, table, index, and app setting in one place.
-- Add automated retrieval evals per product index.
-- Add feedback telemetry from the app to improve weak retrieval areas.
-- Consider a unified `doc_chunks_all` table and `doc_chunks_all_index` only after product-aware filtering is validated.
-
 ## Why This Matters
 
 The assistant is valuable because Microsoft field work often crosses product boundaries. Databricks, Fabric, and Power BI are connected, but they are not interchangeable. This repo builds the retrieval layer that lets the app respect those boundaries while still helping users reason across them.
