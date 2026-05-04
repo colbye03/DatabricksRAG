@@ -1,28 +1,8 @@
 # Databricks + Fabric RAG Expert Assistant
 
-A source-backed field assistant for Azure Databricks, Microsoft Fabric, and Power BI architecture, troubleshooting, implementation guidance, and customer-ready response generation.
+A source-backed RAG assistant for Azure Databricks, Microsoft Fabric, and Power BI field guidance.
 
-This project turns curated product documentation, field playbooks, and notebook-driven knowledge preparation into a live Streamlit assistant backed by Databricks Vector Search and Databricks model serving. The Fabric slot runs the combined Databricks + Fabric + Power BI experience.
-
-## Executive Summary
-
-The assistant is designed for Microsoft field and technical teams who need fast, reliable, source-grounded guidance across Databricks, Fabric, and Power BI scenarios. It helps users move from scattered documentation to actionable answers for architecture decisions, implementation planning, troubleshooting, competitive positioning, and customer communication.
-
-The key idea is simple:
-
-> Route the question to the right product lens, retrieve relevant source context, apply domain-specific answer rules, then generate a field-ready response.
-
-This is not a generic chatbot. It is a routed, source-backed field assistant with product-aware retrieval, topic-specific response contracts, evaluation coverage, and deterministic guardrails for sensitive customer-facing topics.
-
-## What The App Does
-
-- Answers Azure Databricks, Microsoft Fabric, and Power BI questions using retrieved source context.
-- Routes each question to the correct product lens: Databricks, Fabric, Power BI, or Compare / Better Together.
-- Supports architecture guidance, troubleshooting runbooks, implementation steps, learning explanations, customer meeting prep, and competitive positioning.
-- Uses separate retrieval paths for Databricks, Fabric, and Power BI content.
-- Produces source-backed answers with evidence quality indicators.
-- Includes customer-safe language handling for compliance-sensitive topics such as Databricks Compliance Security Profile.
-- Runs as a Streamlit app deployed to Azure App Service.
+This repository contains the corpus-building notebooks and notebook-style scripts that prepare the Databricks, Fabric, and Power BI knowledge sources used by the live assistant. The Fabric app slot uses these product-specific corpora to answer architecture, troubleshooting, implementation, customer-prep, and cross-product comparison questions with retrieved documentation context.
 
 ## Live App
 
@@ -30,368 +10,621 @@ This is not a generic chatbot. It is a routed, source-backed field assistant wit
 | --- | --- | --- |
 | Fabric slot | Combined Databricks + Fabric + Power BI assistant | `https://dbx-fabric-hbbghpckhgd7dec0.centralus-01.azurewebsites.net/` |
 
-The Fabric slot is the main team-facing demo experience because it exposes the combined Databricks, Fabric, Power BI, and cross-product routing behavior.
+The Fabric slot is the main team-facing demo experience because it exposes Databricks, Fabric, Power BI, and Compare / Better Together routing in one app.
+
+## Repository Scope
+
+This repo currently focuses on the RAG data layer:
+
+- Databricks documentation ingestion, chunking, embedding, and Vector Search indexing.
+- Microsoft Fabric documentation ingestion, chunking, embedding, and Vector Search indexing.
+- Power BI, DAX, and Power Query documentation ingestion, chunking, embedding, and Vector Search indexing.
+- Product-separated Delta tables and Vector Search indexes so the app can retrieve the right evidence for the right product lens.
+
+The deployed Streamlit app consumes the outputs of these pipelines through Databricks Vector Search and model-serving configuration. The app source and Azure App Service deployment package are not currently stored in this repository.
 
 ## High-Level Architecture
 
 ```text
-Product docs / field playbooks / curated guidance
+Microsoft Learn docs + optional internal Databricks wiki
   |
   v
-Notebook preparation flow
+Product-specific ingestion notebooks/scripts
   |
   v
-Chunking and embedding
+Raw Delta tables in Unity Catalog
   |
   v
-Databricks Vector Search indexes
+Chunking and embedding with databricks-gte-large-en
   |
   v
-Streamlit app on Azure App Service
+Product-specific chunk Delta tables
   |
   v
-Databricks model serving endpoints
+Databricks Vector Search Delta Sync indexes
   |
   v
-Source-backed field-ready response
+Fabric-slot Streamlit assistant
+  |
+  v
+Source-backed field-ready answer
 ```
 
-The architecture has four major layers:
+Core design principle:
 
-1. **Knowledge preparation**: notebooks and scripts collect, clean, chunk, and embed the content.
-2. **Retrieval**: Databricks Vector Search indexes provide semantic search over the prepared chunks.
-3. **Reasoning and response generation**: Databricks model serving endpoints generate answers from retrieved context and structured instructions.
-4. **Application experience**: Streamlit provides a field-friendly interface with product routing, answer modes, citations, and quality guardrails.
+> Keep product corpora separate first, then let the app route questions to the correct retrieval index.
 
-## Runtime Flow
+That avoids a common multi-product RAG failure mode: giving a confident answer from the wrong product documentation.
 
-When a user asks a question, the app follows this pattern:
+## Repository Layout
 
-1. Resolve the product route: Databricks, Fabric, Power BI, or Compare.
-2. Detect the topic and intent, such as architecture, troubleshooting, implementation, learning, or customer meeting prep.
-3. Build a standalone retrieval query from the current question, attachments, and chat history.
-4. Retrieve relevant chunks from the appropriate Vector Search index.
-5. Assemble a model prompt with retrieved context, topic rules, answer-format rules, and customer-safe writing rules.
-6. Call the configured Databricks model serving endpoint.
-7. Repair or sanitize the answer when required for high-risk topics.
-8. Return a source-backed answer with evidence quality and citations.
+```text
+DatabricksRAG/
+  README.md
+  Notebooks/
+    Databricks Corpus/
+      01_ingestion.ipynb
+      02_chunk_embed.ipynb
+      03_vector_search.ipynb
+    fabric Corpus/
+      01_ingestion_fabric.py
+      02_chunk_embed_fabric.py
+      03_vector_search_fabric.py
+    PBI Corpus/
+      01_ingestion_powerbi.py
+      02_chunk_embed_powerbi.py
+      03_vector_search_powerbi.py
+```
 
-The design principle is:
+The Fabric and Power BI files are Databricks notebook exports in `.py` format. They still use Databricks notebook cell markers such as `# COMMAND ----------` and `%md` markdown cells.
 
-> Route before retrieval. Retrieve before generation. Validate before customer-facing output.
+## Pipeline Summary
 
-## Notebook Flow
+| Product corpus | Ingest output | Chunk output | Vector Search index |
+| --- | --- | --- | --- |
+| Databricks | `chatbot.rag_chatbot.raw_docs` | `chatbot.rag_chatbot.doc_chunks` | `chatbot.rag_chatbot.doc_chunks_index` |
+| Fabric | `chatbot.rag_chatbot.raw_docs_fabric` | `chatbot.rag_chatbot.doc_chunks_fabric` | `chatbot.rag_chatbot.doc_chunks_fabric_index` |
+| Power BI | `chatbot.rag_chatbot.raw_docs_powerbi` | `chatbot.rag_chatbot.doc_chunks_powerbi` | `chatbot.rag_chatbot.doc_chunks_powerbi_index` |
 
-The notebook story has two complementary parts: a Fabric data science workflow and the RAG knowledge pipeline.
+All three pipelines use the same default catalog and schema:
 
-### Fabric Lakehouse And ML Notebooks
+```text
+Catalog: chatbot
+Schema : rag_chatbot
+Vector Search endpoint: databricks-expert-endpoint
+Embedding model: databricks-gte-large-en
+Embedding dimension: 1024
+Chunk size: 1000 characters
+Chunk overlap: 200 characters
+Embedding batch size: 25
+```
 
-These notebooks demonstrate the end-to-end Fabric analytical workflow: ingest, explore, prepare, train, and score.
+## Databricks Corpus Pipeline
 
-| Notebook | Purpose | What It Demonstrates |
+Location: `Notebooks/Databricks Corpus/`
+
+The Databricks corpus is the original knowledge pipeline for Azure Databricks documentation and optional internal Azure Databricks wiki / TSG content.
+
+### 1. `01_ingestion.ipynb`
+
+Purpose: build the raw Databricks documentation table.
+
+What it does:
+
+- Creates or verifies Unity Catalog assets:
+  - Catalog: `chatbot`
+  - Schema: `chatbot.rag_chatbot`
+  - Volume: `/Volumes/chatbot/rag_chatbot/raw_docs`
+- Reads the Azure Databricks Microsoft Learn TOC:
+  - `https://learn.microsoft.com/en-us/azure/databricks/toc.json`
+- Normalizes and deduplicates Databricks documentation URLs.
+- Scrapes documentation pages in parallel using Spark workers.
+- Optionally ingests internal markdown content from:
+  - `/Volumes/chatbot/rag_chatbot/raw_docs/internal_wiki/AzureDataBricks.wiki`
+- Cleans markdown noise from internal wiki content.
+- Combines Microsoft Learn docs and internal wiki docs.
+- Writes the final raw corpus to:
+  - `chatbot.rag_chatbot.raw_docs`
+
+Why it matters:
+
+This notebook creates the raw source-of-truth table for Databricks retrieval. It supports both official documentation and optional internal field troubleshooting guidance.
+
+### 2. `02_chunk_embed.ipynb`
+
+Purpose: convert raw Databricks docs into embedded retrieval chunks.
+
+Input:
+
+- `chatbot.rag_chatbot.raw_docs`
+
+Output:
+
+- `chatbot.rag_chatbot.doc_chunks`
+
+What it does:
+
+- Reads raw Databricks docs.
+- Adds source metadata when older rows do not already have it.
+- Splits each document into overlapping chunks.
+- Uses approximately 1,000 characters per chunk with 200 characters of overlap.
+- Calls the Databricks Foundation Model API through `mlflow.deployments`.
+- Embeds each chunk with `databricks-gte-large-en`.
+- Writes one row per chunk with an embedding vector.
+- Validates total chunk count, null embeddings, and embedding vector length.
+
+Why it matters:
+
+This step turns long documents into semantically searchable retrieval units that are small enough to fit into model prompts and precise enough for source-backed answers.
+
+### 3. `03_vector_search.ipynb`
+
+Purpose: publish Databricks chunks to Mosaic AI Vector Search.
+
+Input:
+
+- `chatbot.rag_chatbot.doc_chunks`
+
+Output index:
+
+- `chatbot.rag_chatbot.doc_chunks_index`
+
+What it does:
+
+- Creates or reuses the Vector Search endpoint:
+  - `databricks-expert-endpoint`
+- Enables Delta Change Data Feed on `chatbot.rag_chatbot.doc_chunks`.
+- Creates a triggered Delta Sync index.
+- Uses `chunk_id` as the primary key.
+- Uses the precomputed `embedding` column.
+- Uses embedding dimension `1024`.
+- Polls index status until ready.
+- Includes optional sync and status inspection cells.
+
+Why it matters:
+
+This notebook makes the Databricks chunk table available to the app as a low-latency semantic retrieval index.
+
+## Fabric Corpus Pipeline
+
+Location: `Notebooks/fabric Corpus/`
+
+The Fabric corpus keeps Microsoft Fabric documentation separate from Databricks so the app can answer Fabric questions with Fabric evidence.
+
+### 1. `01_ingestion_fabric.py`
+
+Purpose: ingest Microsoft Fabric documentation from Microsoft Learn.
+
+Input sources:
+
+The script reads multiple Fabric workload TOCs because Fabric docs are split by workload family rather than one all-up TOC.
+
+Configured doc families:
+
+- `fundamentals`
+- `admin`
+- `data_engineering`
+- `data_factory`
+- `data_science`
+- `data_warehouse`
+- `real_time_intelligence`
+- `onelake`
+- `database`
+- `mirroring`
+- `cicd`
+- `security`
+- `governance`
+- `workload_development_kit`
+
+Output:
+
+- `chatbot.rag_chatbot.raw_docs_fabric`
+
+What it does:
+
+- Creates or verifies the catalog, schema, and volume.
+- Fetches and parses each Fabric TOC.
+- Normalizes URLs to `learn.microsoft.com/en-us/fabric/...`.
+- Deduplicates pages.
+- Scrapes page title and main content.
+- Computes a SHA-256 content hash.
+- Writes successfully scraped pages to the Fabric raw Delta table.
+- Validates row counts, duplicate URLs, missing content, schema, and content length distribution.
+- Appends rollout metadata to:
+  - `chatbot.rag_chatbot.rag_corpus_metadata`
+- Appends ingestion metrics to:
+  - `chatbot.rag_chatbot.rag_ingestion_metrics`
+- Optionally logs scrape errors to:
+  - `chatbot.rag_chatbot.rag_ingestion_errors`
+- Includes a disabled optional path for building a unified raw table:
+  - `chatbot.rag_chatbot.raw_docs_all`
+
+Why it matters:
+
+Fabric has many workload-specific documentation areas. This ingestion script preserves `product`, `doc_family`, `source`, `source_type`, and `toc_url` so the app can retrieve precise Fabric evidence.
+
+### 2. `02_chunk_embed_fabric.py`
+
+Purpose: chunk and embed the Fabric raw corpus.
+
+Input:
+
+- `chatbot.rag_chatbot.raw_docs_fabric`
+
+Output:
+
+- `chatbot.rag_chatbot.doc_chunks_fabric`
+
+What it does:
+
+- Validates required raw table columns: `url`, `title`, and `content`.
+- Preserves or normalizes recommended metadata:
+  - `product`
+  - `doc_family`
+  - `source`
+  - `source_type`
+  - `cloud`
+  - `toc_url`
+  - `content_hash`
+  - `scraped_date`
+- Filters out invalid or very short content.
+- Splits content into 1,000-character chunks with 200-character overlap.
+- Creates deterministic chunk IDs using:
+  - `fabric::<url>::chunk::<chunk_index>`
+- Tests the embedding endpoint before running the full corpus.
+- Embeds chunks with `databricks-gte-large-en` through a pandas UDF.
+- Writes the Fabric chunk table.
+- Validates null embeddings, duplicate chunk IDs, embedding length, and metadata coverage.
+- Appends embedding metrics to:
+  - `chatbot.rag_chatbot.rag_embedding_metrics`
+- Includes a disabled optional path for building a unified chunk table:
+  - `chatbot.rag_chatbot.doc_chunks_all`
+
+Why it matters:
+
+This script keeps Fabric retrieval cleanly separated from Databricks retrieval while preserving workload metadata for better answer quality and future filtering.
+
+### 3. `03_vector_search_fabric.py`
+
+Purpose: publish Fabric chunks to Vector Search.
+
+Input:
+
+- `chatbot.rag_chatbot.doc_chunks_fabric`
+
+Output index:
+
+- `chatbot.rag_chatbot.doc_chunks_fabric_index`
+
+What it does:
+
+- Creates or reuses the shared Vector Search endpoint:
+  - `databricks-expert-endpoint`
+- Validates that Fabric chunks have required columns, embeddings, unique IDs, and 1,024-dimension vectors.
+- Enables Delta Change Data Feed on the Fabric chunk table.
+- Creates or reuses a triggered Delta Sync index.
+- Runs a manual sync when `RUN_MANUAL_SYNC=true`.
+- Waits for index readiness when `WAIT_FOR_READY=true`.
+- Describes the index for troubleshooting and auditability.
+- Validates the indexed corpus shape by product, doc family, source, and source type.
+- Includes a similarity-search smoke test for:
+  - `What is Microsoft Fabric OneLake?`
+- Appends Vector Search metrics to:
+  - `chatbot.rag_chatbot.rag_vector_search_metrics`
+
+Why it matters:
+
+This gives the live app a Fabric-specific semantic retrieval surface, allowing Fabric questions to use Fabric documentation instead of falling back to Databricks-only evidence.
+
+## Power BI Corpus Pipeline
+
+Location: `Notebooks/PBI Corpus/`
+
+The Power BI corpus keeps Power BI, DAX, and Power Query documentation independently retrievable. This matters because Power BI is related to Fabric, but its semantic model, DAX, reporting, gateway, service, and authoring docs have their own concepts and constraints.
+
+### 1. `01_ingestion_powerbi.py`
+
+Purpose: ingest official Microsoft Learn Power BI, DAX, and Power Query documentation.
+
+Configured TOC sources:
+
+- Power BI fundamentals
+- Power BI connect data
+- Power BI create reports
+- Power BI guidance
+- DAX
+- Power Query
+
+Output:
+
+- `chatbot.rag_chatbot.raw_docs_powerbi`
+
+What it does:
+
+- Uses a `requests.Session` with a configurable user agent.
+- Walks each configured TOC recursively.
+- Normalizes Microsoft Learn URLs.
+- Deduplicates pages across TOCs.
+- Scrapes page title and main content using an HTML parser focused on Learn main content.
+- Filters out pages below the configured minimum content length.
+- Adds metadata such as:
+  - `product = powerbi`
+  - `doc_family`
+  - `source = microsoft_learn`
+  - `source_type = official_docs`
+  - `cloud = fabric_powerbi`
+  - `toc_url`
+  - `content_hash`
+  - `scraped_date`
+- Writes the raw Power BI corpus to Delta.
+- Displays doc-family counts and sample rows.
+
+Why it matters:
+
+Power BI retrieval needs its own documentation surface so semantic model, Direct Lake, Import, DirectQuery, DAX, Power Query, gateway, and report-authoring answers do not get diluted by generic Fabric or Databricks context.
+
+### 2. `02_chunk_embed_powerbi.py`
+
+Purpose: chunk and embed the Power BI raw corpus.
+
+Input:
+
+- `chatbot.rag_chatbot.raw_docs_powerbi`
+
+Output:
+
+- `chatbot.rag_chatbot.doc_chunks_powerbi`
+
+What it does:
+
+- Validates required raw table columns: `url`, `title`, and `content`.
+- Preserves or normalizes product-aware metadata.
+- Filters invalid or very short content.
+- Splits content into 1,000-character chunks with 200-character overlap.
+- Creates deterministic chunk IDs using:
+  - `powerbi::<url>::chunk::<chunk_index>`
+- Tests the embedding endpoint before full-corpus embedding.
+- Embeds chunks with `databricks-gte-large-en` through a pandas UDF.
+- Writes the Power BI chunk table.
+- Validates null embeddings, duplicate chunk IDs, embedding length, and metadata coverage.
+- Appends embedding metrics to:
+  - `chatbot.rag_chatbot.rag_embedding_metrics`
+- Includes a disabled optional path for building a unified chunk table:
+  - `chatbot.rag_chatbot.doc_chunks_all`
+
+Why it matters:
+
+This creates a Power BI-specific retrieval layer that supports accurate answers about semantic models, DAX, Power Query, report design, service behavior, and Power BI over Fabric patterns.
+
+### 3. `03_vector_search_powerbi.py`
+
+Purpose: publish Power BI chunks to Vector Search.
+
+Input:
+
+- `chatbot.rag_chatbot.doc_chunks_powerbi`
+
+Output index:
+
+- `chatbot.rag_chatbot.doc_chunks_powerbi_index`
+
+What it does:
+
+- Creates or reuses the shared Vector Search endpoint:
+  - `databricks-expert-endpoint`
+- Validates required columns, embeddings, duplicate IDs, and embedding dimensions.
+- Enables Delta Change Data Feed on the Power BI chunk table.
+- Creates or reuses a triggered Delta Sync index.
+- Runs manual sync when configured.
+- Waits for index readiness when configured.
+- Describes the index for troubleshooting and auditability.
+- Validates indexed corpus shape by product, doc family, source, and source type.
+- Includes a similarity-search smoke test for:
+  - `What is Power BI OneLake?`
+- Appends Vector Search metrics to:
+  - `chatbot.rag_chatbot.rag_vector_search_metrics`
+
+Why it matters:
+
+This gives the assistant a dedicated Power BI retrieval index, which is essential for questions involving semantic model mode choices, DAX, Power Query, report authoring, and Power BI service behavior.
+
+## How The App Ties In
+
+The live Fabric-slot app uses the product-separated indexes from this repo.
+
+At runtime, the app:
+
+1. Accepts a user question in the Streamlit UI.
+2. Resolves the product route: Databricks, Fabric, Power BI, or Compare / Better Together.
+3. Detects topic and intent, such as architecture, troubleshooting, implementation, learning, or customer-ready writing.
+4. Selects the matching Vector Search index.
+5. Retrieves the most relevant chunks.
+6. Builds a structured prompt with retrieved context and topic-specific instructions.
+7. Calls the configured Databricks model-serving endpoint.
+8. Applies answer repair and deterministic guardrails for high-risk customer-facing topics.
+9. Returns a source-backed response with evidence quality and citations.
+
+The product route is what makes the combined app useful. A Power BI semantic model question can retrieve Power BI-specific evidence, a Fabric mirroring question can retrieve Fabric evidence, and a Databricks troubleshooting question can stay grounded in Databricks documentation.
+
+## Product Routing Model
+
+| Route | Retrieval target | Example questions |
 | --- | --- | --- |
-| `01-ingest-data-into-fabric-lakehouse-using-apache-spark.ipynb` | Ingest source data into a Fabric Lakehouse | Connects to Azure Open Datasets, reads NYC Taxi yellow cab data, and writes it as a Lakehouse Delta table. |
-| `02-explore-and-visualize-data-using-notebooks.ipynb` | Explore and visualize the Lakehouse data | Reads Delta data, samples it for analysis, and visualizes distributions such as trip duration. |
-| `03-perform-data-cleansing-and-preparation-using-apache-spark.ipynb` | Clean and prepare the analytical dataset | Loads raw Delta data, computes summary statistics, cleans records, creates derived columns, and writes prepared Delta output. |
-| `04-train-and-track-machine-learning-models.ipynb` | Train and track an ML model | Reads prepared data, creates train/test splits, defines feature engineering, trains with Spark ML / SynapseML patterns, and tracks runs with MLflow. |
-| `05-perform-batch-scoring-and-save-predictions-to-lakehouse.ipynb` | Run batch scoring and persist predictions | Loads the trained model, scores new data, cleans prediction output, and writes predictions back to the Lakehouse. |
+| Databricks | `doc_chunks_index` | Unity Catalog, ADLS Gen2 access, Spark performance, clusters, model serving, Databricks compliance. |
+| Fabric | `doc_chunks_fabric_index` | OneLake, Fabric mirroring, Fabric Lakehouse, Fabric capacity, Fabric workspace governance. |
+| Power BI | `doc_chunks_powerbi_index` | Semantic models, Direct Lake, Import, DirectQuery, DAX, Power Query, Power BI reports. |
+| Compare / Better Together | Multiple product indexes | Databricks + Fabric + Power BI architecture and customer positioning. |
 
-Together these notebooks show a complete Fabric data workflow:
+## Operational Tables
 
-```text
-Ingest -> Explore -> Clean/Prepare -> Train/Track -> Batch Score -> Persist Predictions
-```
+The Fabric and Power BI pipelines also write lightweight observability tables.
 
-### RAG Preparation Notebooks
+| Table | Purpose |
+| --- | --- |
+| `chatbot.rag_chatbot.rag_corpus_metadata` | Records corpus layer, product, table, rollout status, and notes. |
+| `chatbot.rag_chatbot.rag_ingestion_metrics` | Records source counts, target counts, rejected rows, status, and completion time. |
+| `chatbot.rag_chatbot.rag_ingestion_errors` | Stores scrape errors when ingestion completes with page-level failures. |
+| `chatbot.rag_chatbot.rag_embedding_metrics` | Records chunking and embedding counts, failed embeddings, model, and status. |
+| `chatbot.rag_chatbot.rag_vector_search_metrics` | Records Vector Search endpoint, index name, source row count, and sync status. |
 
-These notebooks are the bridge between source material and the live assistant.
+## Environment Variables
 
-| Notebook | Purpose | What It Demonstrates |
+The notebooks use defaults but can be parameterized with environment variables.
+
+| Variable | Used by | Default / purpose |
 | --- | --- | --- |
-| `02_chunk_embed.ipynb` | Chunk and embed the source knowledge | Splits documentation and curated guidance into retrievable chunks, generates embeddings, and prepares the data structure for semantic search. |
-| `03_vector_search.ipynb` | Create and validate Vector Search retrieval | Creates or updates Databricks Vector Search indexes and validates that semantic retrieval returns useful context for the app. |
+| `RAG_CATALOG` | Fabric and Power BI scripts | Defaults to `chatbot`. |
+| `RAG_SCHEMA` | Fabric and Power BI scripts | Defaults to `rag_chatbot`. |
+| `RAG_VOLUME` | Fabric ingestion | Defaults to `raw_docs`. |
+| `FABRIC_RAW_TABLE` | Fabric ingestion and chunking | Defaults to `chatbot.rag_chatbot.raw_docs_fabric`. |
+| `FABRIC_CHUNKS_TABLE` | Fabric chunking and Vector Search | Defaults to `chatbot.rag_chatbot.doc_chunks_fabric`. |
+| `FABRIC_VECTOR_SEARCH_INDEX` | Fabric Vector Search | Defaults to `chatbot.rag_chatbot.doc_chunks_fabric_index`. |
+| `POWERBI_RAW_TABLE` | Power BI ingestion and chunking | Defaults to `chatbot.rag_chatbot.raw_docs_powerbi`. |
+| `POWERBI_CHUNKS_TABLE` | Power BI chunking and Vector Search | Defaults to `chatbot.rag_chatbot.doc_chunks_powerbi`. |
+| `POWERBI_VECTOR_SEARCH_INDEX` | Power BI Vector Search | Defaults to `chatbot.rag_chatbot.doc_chunks_powerbi_index`. |
+| `VECTOR_SEARCH_ENDPOINT` | Fabric and Power BI Vector Search | Defaults to `databricks-expert-endpoint`. |
+| `EMBED_MODEL` | Fabric and Power BI chunking/search | Defaults to `databricks-gte-large-en`. |
+| `CHUNK_SIZE` | Fabric and Power BI chunking | Defaults to `1000`. |
+| `CHUNK_OVERLAP` | Fabric and Power BI chunking | Defaults to `200`. |
+| `EMBED_BATCH` | Fabric and Power BI chunking | Defaults to `25`. |
+| `EMBEDDING_DIMENSION` | Fabric and Power BI Vector Search | Defaults to `1024`. |
+| `VECTOR_SEARCH_PIPELINE_TYPE` | Fabric and Power BI Vector Search | Defaults to `TRIGGERED`. |
+| `RUN_MANUAL_SYNC` | Fabric and Power BI Vector Search | Defaults to `true`. |
+| `WAIT_FOR_READY` | Fabric and Power BI Vector Search | Defaults to `true`. |
+| `BUILD_UNIFIED_RAW_TABLE` | Fabric ingestion | Defaults to `false`; only use after routing is ready. |
+| `BUILD_UNIFIED_CHUNKS_TABLE` | Fabric and Power BI chunking | Defaults to `false`; only use after routing is ready. |
+| `MAX_PAGES_PER_TOC` | Power BI ingestion | Defaults to `0`, meaning unlimited. Useful for test runs. |
+| `MIN_CONTENT_CHARS` | Power BI ingestion | Defaults to `400`. Filters weak pages. |
 
-The RAG notebooks are the knowledge factory. The Streamlit app is the product experience.
+## Recommended Run Order
 
-## Vector Search Design
+Run each corpus independently so failures stay isolated.
 
-The app is built to support multiple retrieval indexes so that answers stay aligned to the right product domain.
+### Databricks
 
-Typical index layout:
+1. `Notebooks/Databricks Corpus/01_ingestion.ipynb`
+2. `Notebooks/Databricks Corpus/02_chunk_embed.ipynb`
+3. `Notebooks/Databricks Corpus/03_vector_search.ipynb`
 
-| Index | Purpose |
-| --- | --- |
-| Databricks documentation index | Core Azure Databricks architecture, implementation, troubleshooting, and governance guidance. |
-| Fabric documentation index | Microsoft Fabric architecture, lakehouse, mirroring, OneLake, and Fabric integration guidance. |
-| Power BI documentation index | Semantic model, Direct Lake, Import, DirectQuery, governance, and report-serving guidance. |
+### Fabric
 
-This matters because cross-product assistants can fail when they blend concepts too freely. A Power BI Direct Lake question should not receive a generic Databricks answer, and a Databricks Unity Catalog question should not be answered as if Fabric governance automatically applies.
+1. `Notebooks/fabric Corpus/01_ingestion_fabric.py`
+2. `Notebooks/fabric Corpus/02_chunk_embed_fabric.py`
+3. `Notebooks/fabric Corpus/03_vector_search_fabric.py`
 
-## Product Routing
+### Power BI
 
-The Fabric slot exposes multiple product lenses:
+1. `Notebooks/PBI Corpus/01_ingestion_powerbi.py`
+2. `Notebooks/PBI Corpus/02_chunk_embed_powerbi.py`
+3. `Notebooks/PBI Corpus/03_vector_search_powerbi.py`
 
-- **Databricks**: Azure Databricks-focused architecture, troubleshooting, Unity Catalog, Spark, model serving, Lakehouse, and security guidance.
-- **Fabric**: Microsoft Fabric workspace, Lakehouse, OneLake, mirroring, capacity, and integration guidance.
-- **Power BI**: Semantic models, Direct Lake, Import, DirectQuery, Composite models, RLS/OLS, deployment pipelines, and reporting architecture.
-- **Compare / Better Together**: Cross-product positioning across Databricks, Fabric, and Power BI.
+## Validation Checklist
 
-The app can also run in Databricks-only mode for the production slot and DP-700 certification mode for the SME slot.
+After each ingestion run:
 
-## Answer Modes And Use Cases
+- Raw table exists.
+- Row count is greater than zero.
+- Duplicate URL count is zero.
+- Missing content count is zero or explained.
+- Product and doc-family metadata are populated.
 
-The assistant is optimized for practical field workflows.
+After each chunk/embed run:
 
-| Use Case | Example |
-| --- | --- |
-| Architecture guidance | Compare Direct Lake, Import, DirectQuery, and Composite semantic model patterns over Databricks-backed data. |
-| Troubleshooting | Diagnose ADLS Gen2 private endpoint access failures from Databricks compute. |
-| Implementation planning | Provide step-by-step Fabric mirroring or Databricks Unity Catalog setup guidance. |
-| Customer meeting prep | Create a concise customer-ready talk track with risks, validation steps, and next actions. |
-| Competitive positioning | Separate valid architecture concerns from competitor framing and produce a field response. |
-| Learning | Explain concepts such as Unity Catalog, OneLake, Direct Lake, or Compliance Security Profile in practical terms. |
+- Chunk table exists.
+- Chunk count is greater than raw page count.
+- Null embedding count is zero.
+- Duplicate `chunk_id` count is zero.
+- Embedding length is 1024.
+- Product metadata is preserved on every chunk.
 
-## Topic-Specific Playbooks
+After each Vector Search run:
 
-The app includes specialized handling for high-value and high-risk topics, including:
+- Delta Change Data Feed is enabled on the chunk table.
+- Vector Search endpoint is online.
+- Product-specific index exists.
+- Index sync completes or reaches expected progress.
+- Similarity-search smoke test returns relevant documents.
 
-- Microsoft Fabric mirroring and Fabric access to Databricks / Unity Catalog data.
-- Power BI semantic model architecture over Fabric and Databricks-backed data.
-- ADLS Gen2 private access from Databricks.
-- Unity Catalog architecture and setup.
-- Spark and notebook performance troubleshooting.
-- Databricks cluster startup and bootstrap diagnostics.
-- Databricks Compliance Security Profile and compliance architecture.
-- Cross-product competitive positioning.
+## Demo Prompts For The Fabric Slot
 
-These topic rules help the app avoid generic answers and produce guidance that is useful in real customer and field scenarios.
+Use these prompts to show why separate product indexes matter.
 
-## Customer-Safe Compliance Guardrails
-
-Compliance and security topics require extra care. For customer-facing CSP responses, the app avoids broad reassurance such as:
-
-- `unaffected`
-- `no impact`
-- `definitive answers`
-- `workspace-isolated`
-- blanket claims that other services or resource groups are outside scope
-
-Instead, the app uses safer language such as:
-
-- CSP does not automatically reconfigure other Azure services.
-- CSP does not automatically propagate to other workspaces.
-- Shared storage, identity, networking, logging, monitoring, and compliance dependencies should still be validated.
-- Regulated-data access paths may require equivalent controls as a governance decision.
-
-This guardrail is implemented deterministically after model generation because prompt-only safety is not reliable enough for customer-facing compliance claims.
-
-## Evaluation Harness
-
-The project includes an offline evaluation harness with 50 representative questions across routes, intents, and source expectations.
-
-The eval flow checks:
-
-- Product route detection.
-- Intent detection.
-- Expected answer structure.
-- Source and evidence behavior.
-- Coverage across Databricks, Fabric, Power BI, and comparison scenarios.
-
-Latest validated results:
-
-- 50 / 50 cases passed.
-- Route accuracy: 100%.
-- Intent accuracy: 100%.
-- Average score: 98.4.
-
-This matters because multi-product assistants need repeatable quality checks. The biggest risk is not just a bad answer; it is a confident answer using the wrong product lens.
-
-## Deployment Model
-
-The app is deployed to Azure App Service with slot-specific configuration.
-
-### Production Slot
-
-Databricks-only route:
-
-```text
-ENABLE_FABRIC=false
-ENABLE_POWERBI=false
-APP_VARIANT=databricks_only
-DEFAULT_PRODUCT_ROUTE=Databricks
-VISIBLE_PRODUCT_ROUTES=Databricks
-```
-
-### Fabric Slot
-
-Combined Databricks + Fabric + Power BI route:
-
-```text
-ENABLE_FABRIC=true
-ENABLE_POWERBI=true
-```
-
-### SME Slot
-
-Personal DP-700 certification assistant:
-
-```text
-APP_VARIANT=dp700_cert_personal
-DP700_CERT_ONLY=true
-ENABLE_FABRIC=false
-ENABLE_POWERBI=false
-DEFAULT_PRODUCT_ROUTE=DP700
-```
-
-## Important Environment Settings
-
-The app expects Databricks and Vector Search configuration through environment variables or App Service settings.
-
-| Setting | Purpose |
-| --- | --- |
-| `DATABRICKS_HOST` | Databricks workspace host. |
-| `DATABRICKS_TOKEN` or OAuth client settings | Authentication for Databricks APIs. |
-| `VECTOR_SEARCH_ENDPOINT` | Databricks Vector Search endpoint. |
-| `VECTOR_SEARCH_INDEX` | Databricks document index. |
-| `FABRIC_VECTOR_SEARCH_INDEX` | Fabric document index. |
-| `POWERBI_VECTOR_SEARCH_INDEX` | Power BI document index. |
-| `CHAT_MODEL` | General chat model serving endpoint. |
-| `REASONING_MODEL` | Higher-reasoning model endpoint for architecture and complex topics. |
-| `SCREENSHOT_MODEL` | Optional multimodal / screenshot extraction endpoint. |
-| `EMBED_MODEL` or `EMBEDDING_MODEL` | Embedding model name. |
-| `ENABLE_FABRIC` | Enables Fabric route and Fabric index. |
-| `ENABLE_POWERBI` | Enables Power BI route and Power BI index. |
-| `APP_VARIANT` | Controls slot-specific behavior. |
-
-## Deployment Commands
-
-Typical deployment flow:
-
-```powershell
-Set-Location C:\Users\edcolby\Downloads
-c:/Repos/Cursor/.venv/Scripts/python.exe -m py_compile .\appservice.py
-
-$zip = "dbx-fabric-release-$(New-Guid).zip"
-Compress-Archive -Path .\appservice.py, .\requirements.txt -DestinationPath $zip -Force
-
-az webapp deploy `
-  --resource-group appservice `
-  --name DBX `
-  --slot fabric `
-  --src-path $zip `
-  --type zip `
-  --clean true `
-  --restart true
-
-az webapp restart --resource-group appservice --name DBX --slot fabric
-```
-
-Health check:
-
-```powershell
-Invoke-WebRequest `
-  -Uri 'https://dbx-fabric-hbbghpckhgd7dec0.centralus-01.azurewebsites.net/_stcore/health' `
-  -UseBasicParsing
-```
-
-## Demo Flow
-
-Use the Fabric slot for the primary team demo.
-
-### Demo 1: Fabric And Power BI Architecture
-
-Prompt:
-
-```text
-We have Databricks Unity Catalog source data and need to serve Power BI reports. Compare Direct Lake, Import, DirectQuery, and Composite models. What should we recommend?
-```
-
-What this demonstrates:
-
-- Fabric / Power BI route handling.
-- Direct Lake nuance.
-- Databricks-backed data pattern awareness.
-- Decision-matrix output.
-- Cross-product architecture guidance.
-
-### Demo 2: Databricks Troubleshooting
-
-Prompt:
+### Databricks troubleshooting
 
 ```text
 A Databricks cluster cannot access ADLS Gen2 with public network access disabled. What should I check first?
 ```
 
-What this demonstrates:
+Shows Databricks-specific retrieval around private endpoints, private DNS, RBAC, and Unity Catalog storage permissions.
 
-- Practical diagnostic flow.
-- Separation of private endpoint, private DNS, RBAC, and Unity Catalog permissions.
-- Field-ready troubleshooting output.
+### Fabric architecture
 
-### Demo 3: Customer-Ready Compliance Email
+```text
+How should I explain Microsoft Fabric OneLake and mirroring to a customer who already uses Azure Databricks Unity Catalog?
+```
 
-Prompt:
+Shows Fabric-specific retrieval and cross-product nuance without pretending Fabric mirroring and OneLake shortcuts are the same thing.
+
+### Power BI semantic model architecture
+
+```text
+We have Databricks Unity Catalog source data and need Power BI reports. Compare Direct Lake, Import, DirectQuery, and Composite models. What should we recommend?
+```
+
+Shows Power BI-specific retrieval and the difference between Fabric-native Direct Lake patterns, Import refresh patterns, DirectQuery to Databricks SQL, and hybrid approaches.
+
+### Customer-ready compliance response
 
 ```text
 Draft a customer email: If we enable Databricks Compliance Security Profile in one workspace, does it impact other Azure resource groups, non-Databricks services, or another workspace sharing the same ADLS Gen2 account?
 ```
 
-What this demonstrates:
-
-- Customer-ready response generation.
-- Compliance-safe wording.
-- Deterministic guardrails for risky claims.
-- Practical validation checklist.
+Shows customer-safe writing and deterministic guardrails for compliance-sensitive answers.
 
 ## Presentation Talk Track
 
-Suggested opening:
+Use this framing when presenting the project:
 
-> I built this as a field enablement assistant for Databricks, Fabric, and Power BI scenarios. The goal is to reduce time spent hunting across docs, improve consistency of customer-facing guidance, and give teams a safer way to prepare architecture recommendations, troubleshooting steps, and competitive positioning.
+> I built this as a source-backed field assistant for Databricks, Fabric, and Power BI. The goal is to help Microsoft teams get faster, safer, more consistent guidance across products without blending product boundaries incorrectly.
 
-Suggested architecture explanation:
+Then describe the pipeline:
 
-> The notebooks are the factory and the app is the product experience. The notebooks prepare content by ingesting, cleaning, chunking, embedding, and indexing it. The app then routes the user question, retrieves the right context, applies product-specific rules, and generates a source-backed answer.
+> Each product has its own corpus pipeline. We ingest official documentation, preserve product metadata, chunk and embed the text, and publish it to a product-specific Vector Search index. The app then routes the user question to the right index before generating an answer.
 
-Suggested quality explanation:
+Then describe why it is more than a chatbot:
 
-> I did not want to judge quality by vibes, so I added an eval harness with representative questions across product routes and answer types. That gives us a repeatable way to catch routing or intent regressions.
+> The important part is not just that it calls a model. It routes first, retrieves source evidence second, applies topic-specific response rules third, and then generates a field-ready answer. That makes it useful for architecture reviews, troubleshooting, customer prep, and cross-product positioning.
 
-Suggested closing:
+Strong phrase to use:
 
-> The big idea is to give Microsoft teams a practical, source-backed assistant that understands the difference between Databricks, Fabric, and Power BI, and can turn that knowledge into usable field guidance quickly and safely.
+> The notebooks are the knowledge factory. The Fabric slot is the product experience.
 
-## Project Roadmap
+## Current Design Decisions
 
-Potential next steps:
+- Product corpora are intentionally separated into Databricks, Fabric, and Power BI tables and indexes.
+- Unified raw and chunk tables are present as optional future paths, but disabled by default.
+- Vector Search indexes use Delta Sync over precomputed embeddings.
+- Fabric and Power BI scripts preserve product metadata for future filtering, ranking, or unified-index migration.
+- The live app should select retrieval targets by product route rather than querying one mixed corpus blindly.
 
-- Add more official Microsoft Learn, Databricks, Fabric, and Power BI sources.
-- Automate scheduled re-indexing.
-- Add feedback buttons and answer-quality telemetry.
-- Add CI/CD checks that run the eval harness before deployment.
-- Add Teams or Copilot Studio integration.
-- Add role-specific modes for CSA, Specialist, CSAM, SE, and support engineers.
-- Expand deterministic validators for security, compliance, and competitive claims.
-- Add richer source coverage diagnostics when retrieved evidence is thin.
+## Future Improvements
 
-## Key Design Principles
+- Add app source code and deployment scripts to this repo.
+- Add an orchestration notebook or Lakeflow job that refreshes all three corpora in order.
+- Add CI/CD checks for notebook syntax and table/index configuration drift.
+- Add a small manifest file that records each corpus, table, index, and app setting in one place.
+- Add automated retrieval evals per product index.
+- Add feedback telemetry from the app to improve weak retrieval areas.
+- Consider a unified `doc_chunks_all` table and `doc_chunks_all_index` only after product-aware filtering is validated.
 
-- **Product-aware routing**: avoid blending Databricks, Fabric, and Power BI concepts incorrectly.
-- **Source-backed generation**: answers should be grounded in retrieved evidence.
-- **Field-ready structure**: output should be directly useful for real architecture, implementation, and support scenarios.
-- **Customer-safe language**: sensitive topics need conservative, validated wording.
-- **Repeatable evaluation**: quality should be tested with a corpus, not only manual spot checks.
-- **Slot-specific behavior**: the same codebase can support different app experiences through configuration.
+## Why This Matters
 
-## Repository Status
+The assistant is valuable because Microsoft field work often crosses product boundaries. Databricks, Fabric, and Power BI are connected, but they are not interchangeable. This repo builds the retrieval layer that lets the app respect those boundaries while still helping users reason across them.
 
-This repository documents the Databricks + Fabric RAG assistant and should evolve into the source home for:
+The result is a more credible assistant for:
 
-- App source code.
-- Notebook pipeline assets.
-- Evaluation harness.
-- Deployment scripts.
-- Architecture diagrams.
-- Demo prompts and presentation materials.
-
-Current README content captures the working system design, deployment model, notebook flow, and presentation story for the Fabric slot experience.
+- Databricks troubleshooting and architecture.
+- Fabric Lakehouse, OneLake, mirroring, and governance scenarios.
+- Power BI semantic model and reporting decisions.
+- Better Together guidance across Databricks, Fabric, and Power BI.
+- Customer-ready responses that are practical, sourced, and safer to share.
