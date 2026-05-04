@@ -24,15 +24,13 @@ This is not a generic chatbot. It is a routed, source-backed field assistant wit
 - Includes customer-safe language handling for compliance-sensitive topics such as Databricks Compliance Security Profile.
 - Runs as a Streamlit app deployed to Azure App Service.
 
-## Live App Slots
+## Live App
 
-| Slot | Purpose | URL |
+| App | Purpose | URL |
 | --- | --- | --- |
-| Production | Databricks-only expert assistant | `https://dbx-hddhczdfb2drg6dj.centralus-01.azurewebsites.net/` |
-| Fabric | Combined Databricks + Fabric + Power BI assistant | `https://dbx-fabric-hbbghpckhgd7dec0.centralus-01.azurewebsites.net/` |
-| SME | Personal DP-700 certification coach | `https://dbx-sme-aygegcbeebakdrf4.centralus-01.azurewebsites.net/` |
+| Fabric slot | Combined Databricks + Fabric + Power BI assistant | `https://dbx-fabric-hbbghpckhgd7dec0.centralus-01.azurewebsites.net/` |
 
-The main team-facing demo experience is the Fabric slot because it exposes the combined Databricks, Fabric, Power BI, and cross-product routing behavior.
+The Fabric slot is the main team-facing demo experience because it exposes the combined Databricks, Fabric, Power BI, and cross-product routing behavior.
 
 ## High-Level Architecture
 
