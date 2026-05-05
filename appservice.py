@@ -30,7 +30,7 @@ except Exception:
 # =============================================================================
 # 01. STREAMLIT PAGE CONFIG
 # =============================================================================
-APP_BUILD_MARKER = "databricks-csp-customer-email-sanitizer-2026-05-04-04"
+APP_BUILD_MARKER = "fabric-slot-chat-scroll-multi-screenshot-2026-05-04-02"
 
 st.set_page_config(
     page_title="Databricks + Fabric Expert Assistant" if os.getenv("ENABLE_FABRIC", "false").lower() == "true" else "Databricks Expert Assistant",
@@ -768,14 +768,14 @@ sidebar_uploaded_file = None
 
 
 def render_paste_screenshot_helper():
-        """Enable Ctrl+V screenshot paste into the nearest Streamlit file input when the browser allows it."""
-        components.html(
-                """
-                <script>
-                (function () {
-                    const doc = window.parent.document;
-                    if (window.parent.__dbxPasteScreenshotHelperInstalled) return;
-                    window.parent.__dbxPasteScreenshotHelperInstalled = true;
+    """Enable Ctrl+V screenshot paste into the nearest Streamlit file input when the browser allows it."""
+    components.html(
+        """
+        <script>
+        (function () {
+            const doc = window.parent.document;
+            if (window.parent.__dbxPasteScreenshotHelperInstalled) return;
+            window.parent.__dbxPasteScreenshotHelperInstalled = true;
 
                     function findFileInput() {
                         const inputs = Array.from(doc.querySelectorAll('input[type="file"]'));
@@ -810,12 +810,17 @@ def render_paste_screenshot_helper():
                     }
 
                     doc.addEventListener('paste', function (event) {
-                        const items = event.clipboardData && event.clipboardData.items ? Array.from(event.clipboardData.items) : [];
-                        const imageItem = items.find((item) => item.type && item.type.startsWith('image/'));
-                        if (!imageItem) return;
+                        const clipboard = event.clipboardData;
+                        const items = clipboard && clipboard.items ? Array.from(clipboard.items) : [];
+                        const imageItems = items.filter((item) => item.type && item.type.startsWith('image/'));
+                        if (!imageItems.length) return;
 
-                        const blob = imageItem.getAsFile();
-                        if (!blob) return;
+                        const hasTextPayload = Boolean(
+                            (clipboard && clipboard.getData && clipboard.getData('text/plain')) ||
+                            (clipboard && clipboard.getData && clipboard.getData('text/html')) ||
+                            items.some((item) => item.kind === 'string' && item.type && item.type.startsWith('text/'))
+                        );
+                        if (hasTextPayload) return;
 
                         const input = findFileInput();
                         if (!input) {
@@ -823,19 +828,57 @@ def render_paste_screenshot_helper():
                             return;
                         }
 
-                        const extension = (blob.type || 'image/png').includes('jpeg') ? 'jpg' : 'png';
-                        const file = new File([blob], `pasted-screenshot-${Date.now()}.${extension}`, { type: blob.type || 'image/png' });
                         const dataTransfer = new DataTransfer();
-                        dataTransfer.items.add(file);
+                        Array.from(input.files || []).forEach((file) => dataTransfer.items.add(file));
+
+                        imageItems.forEach((imageItem, index) => {
+                            const blob = imageItem.getAsFile();
+                            if (!blob) return;
+
+                            const extension = (blob.type || 'image/png').includes('jpeg') ? 'jpg' : 'png';
+                            const file = new File(
+                                [blob],
+                                `pasted-screenshot-${Date.now()}-${index + 1}.${extension}`,
+                                { type: blob.type || 'image/png' }
+                            );
+                            dataTransfer.items.add(file);
+                        });
+
+                        if (!dataTransfer.files.length) return;
+
                         input.files = dataTransfer.files;
                         input.dispatchEvent(new Event('change', { bubbles: true }));
-                        showPasteToast('Screenshot pasted and attached. Add a question, then send.', false);
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+
+                        const addedCount = imageItems.length;
+                        const totalCount = dataTransfer.files.length;
+                        const addedLabel = addedCount === 1 ? 'screenshot' : 'screenshots';
+                        showPasteToast(`${addedCount} ${addedLabel} pasted. ${totalCount} total attachment${totalCount === 1 ? '' : 's'} ready.`, false);
                     }, true);
                 })();
                 </script>
-                """,
-                height=0,
-        )
+            """,
+            height=0,
+            )
+
+
+def render_scroll_to_latest_exchange_script():
+    components.html(
+        """
+        <script>
+        (function () {
+            const doc = window.parent.document;
+            const anchor = doc.getElementById('dbx-latest-exchange-start');
+            if (!anchor) return;
+
+            setTimeout(() => {
+                anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 120);
+        })();
+        </script>
+        """,
+        height=0,
+    )
 
 # =============================================================================
 # 06. CURATED PLAYBOOKS
@@ -4394,10 +4437,11 @@ with st.sidebar:
         sidebar_uploaded_file = st.file_uploader(
             "📎 Attach screenshot/file for next message",
             type=["png", "jpg", "jpeg", "txt", "log", "json", "sql", "py", "yml", "yaml", "md", "csv"],
+            accept_multiple_files=True,
         )
 
-        if sidebar_uploaded_file is not None:
-            st.info(f"Attachment ready for next message: {sidebar_uploaded_file.name}")
+        if sidebar_uploaded_file:
+            st.info(f"{len(sidebar_uploaded_file)} attachment{'s' if len(sidebar_uploaded_file) != 1 else ''} ready for next message.")
 
     if st.button("Clear chat", use_container_width=True):
         st.session_state["messages"] = []
@@ -4661,7 +4705,7 @@ if CHAT_INPUT_FILE_SUPPORT:
     chat_placeholder = "Ask a Databricks or Fabric question, paste error text, press Ctrl+V for screenshot, or attach a file..." if ENABLE_FABRIC else "Ask a Databricks question, paste error text, press Ctrl+V for screenshot, or attach a file..."
     chat_value = st.chat_input(
         chat_placeholder,
-        accept_file=True,
+        accept_file="multiple",
         file_type=["png", "jpg", "jpeg", "txt", "log", "json", "sql", "py", "yml", "yaml", "md", "csv"],
     )
 
@@ -4671,8 +4715,8 @@ else:
     prompt = st.chat_input(chat_placeholder)
     uploaded_files = []
 
-    if sidebar_uploaded_file is not None:
-        uploaded_files = [sidebar_uploaded_file]
+    if sidebar_uploaded_file:
+        uploaded_files = sidebar_uploaded_file if isinstance(sidebar_uploaded_file, list) else [sidebar_uploaded_file]
 
 if selected_example_prompt and not prompt:
     prompt = selected_example_prompt
@@ -4719,6 +4763,8 @@ if prompt or uploaded_files:
         content=logged_user_content,
     )
 
+    st.markdown('<div id="dbx-latest-exchange-start"></div>', unsafe_allow_html=True)
+
     with st.chat_message("user"):
         st.markdown(user_display_content)
 
@@ -4764,6 +4810,8 @@ if prompt or uploaded_files:
                     else:
                         label = "🧠 Internal TSG" if url.startswith("internal_wiki://") else "📘 Docs"
                         st.markdown(f"{sid} {label} [{title}]({url})")
+
+    render_scroll_to_latest_exchange_script()
 
     st.session_state["messages"].append(
         {
