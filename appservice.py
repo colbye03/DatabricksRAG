@@ -30,7 +30,7 @@ except Exception:
 # =============================================================================
 # 01. STREAMLIT PAGE CONFIG
 # =============================================================================
-APP_BUILD_MARKER = "fabric-slot-chat-scroll-multi-screenshot-2026-05-04-02"
+APP_BUILD_MARKER = "sme-reasoning-model-selector-2026-05-06-01"
 
 st.set_page_config(
     page_title="Databricks + Fabric Expert Assistant" if os.getenv("ENABLE_FABRIC", "false").lower() == "true" else "Databricks Expert Assistant",
@@ -368,6 +368,45 @@ POWERBI_DOC_CHUNKS_TABLE = os.getenv("POWERBI_DOC_CHUNKS_TABLE", f"{CATALOG}.{SC
 
 CHAT_MODEL = os.getenv("CHAT_MODEL", "databricks-meta-llama-3-3-70b-instruct")
 REASONING_MODEL = os.getenv("REASONING_MODEL", CHAT_MODEL)
+CONFIGURED_REASONING_MODEL_OPTIONS = [
+    option.strip()
+    for option in os.getenv("REASONING_MODEL_OPTIONS", "").split(",")
+    if option.strip()
+]
+
+
+def unique_model_options(options):
+    unique = []
+    for option in options:
+        if option and option not in unique:
+            unique.append(option)
+    return unique
+
+
+REASONING_MODEL_OPTIONS = unique_model_options(
+    [
+        REASONING_MODEL,
+        "databricks-claude-sonnet-4",
+        "databricks-claude-sonnet-4-5",
+        "databricks-claude-sonnet-4-6",
+        "databricks-claude-haiku-4-5",
+        "databricks-claude-opus-4-1",
+        "databricks-claude-opus-4-5",
+        "databricks-claude-opus-4-6",
+        "databricks-claude-opus-4-7",
+        "databricks-llama-4-maverick",
+        "databricks-meta-llama-3.1-405b-instruct",
+        "databricks-meta-llama-3-1-8b-instruct",
+        CHAT_MODEL,
+        "databricks-meta-llama-3-3-70b-instruct",
+        "databricks-gpt-oss-120b",
+        "databricks-gpt-oss-20b",
+        "databricks-gemma-3-12b",
+        "databricks-qwen35-122b-a10b",
+        "databricks-qwen3-next-80b-a3b-instruct",
+    ]
+    + CONFIGURED_REASONING_MODEL_OPTIONS
+)
 EMBED_MODEL = os.getenv("EMBED_MODEL") or os.getenv("EMBEDDING_MODEL") or "databricks-gte-large-en"
 SCREENSHOT_MODEL = os.getenv("SCREENSHOT_MODEL", "")
 
@@ -667,6 +706,11 @@ def queue_answer_mode_regeneration():
         st.session_state["pending_answer_mode_regeneration"] = True
 
 
+def queue_reasoning_model_regeneration():
+    if st.session_state.get("last_answer"):
+        st.session_state["pending_answer_mode_regeneration"] = True
+
+
 def queue_product_route_regeneration():
     if st.session_state.get("last_answer"):
         st.session_state["pending_answer_mode_regeneration"] = True
@@ -696,6 +740,9 @@ def init_chat_state():
 
     if "pending_answer_mode_regeneration" not in st.session_state:
         st.session_state["pending_answer_mode_regeneration"] = False
+
+    if "reasoning_model_endpoint" not in st.session_state:
+        st.session_state["reasoning_model_endpoint"] = REASONING_MODEL
 
 
 init_chat_state()
@@ -2137,6 +2184,8 @@ def build_quality_instruction(intent: str, topic: str, answer_mode: str) -> str:
 # 10. MODEL / RETRIEVAL HELPERS
 # =============================================================================
 def choose_chat_model(intent: str, topic: str) -> str:
+    selected_reasoning_model = st.session_state.get("reasoning_model_endpoint", REASONING_MODEL)
+
     if intent == "competitive_positioning":
         return CHAT_MODEL
 
@@ -2158,7 +2207,7 @@ def choose_chat_model(intent: str, topic: str) -> str:
     ]
 
     if intent in high_reasoning_intents or topic in high_reasoning_topics:
-        return REASONING_MODEL
+        return selected_reasoning_model
 
     return CHAT_MODEL
 
@@ -2167,8 +2216,9 @@ def predict_chat_text(messages, preferred_model: str) -> str:
     if deploy_client is None:
         raise RuntimeError("Databricks model client is not configured.")
 
+    selected_reasoning_model = st.session_state.get("reasoning_model_endpoint", REASONING_MODEL)
     candidate_models = []
-    for model_name in [preferred_model, REASONING_MODEL, CHAT_MODEL]:
+    for model_name in [preferred_model, selected_reasoning_model, REASONING_MODEL, CHAT_MODEL]:
         if model_name and model_name not in candidate_models:
             candidate_models.append(model_name)
 
@@ -4407,6 +4457,20 @@ with st.sidebar:
             on_change=queue_answer_mode_regeneration,
             help="Leave on Auto unless you want to force a specific answer style.",
         )
+
+        if st.session_state.get("reasoning_model_endpoint") not in REASONING_MODEL_OPTIONS:
+            st.session_state["reasoning_model_endpoint"] = REASONING_MODEL
+
+        selected_reasoning_model = st.selectbox(
+            "Reasoning model",
+            REASONING_MODEL_OPTIONS,
+            index=REASONING_MODEL_OPTIONS.index(st.session_state["reasoning_model_endpoint"]),
+            key="reasoning_model_endpoint",
+            on_change=queue_reasoning_model_regeneration,
+            help="Used for heavier answer modes and topics such as troubleshooting, architecture, implementation, Fabric mirroring, Unity Catalog, ADLS access, Spark performance, and learning.",
+        )
+        st.caption(f"Active reasoning model: `{selected_reasoning_model}`")
+
         k = st.slider(
             "Final context chunks",
             min_value=6,
@@ -4471,6 +4535,7 @@ with st.sidebar:
 
     with st.expander("Build info", expanded=False):
         st.caption(f"Build: `{APP_BUILD_MARKER}`")
+        st.caption(f"Reasoning model: `{st.session_state.get('reasoning_model_endpoint', REASONING_MODEL)}`")
 
 # =============================================================================
 # 16. MAIN CHAT UI
