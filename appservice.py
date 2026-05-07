@@ -30,7 +30,7 @@ except Exception:
 # =============================================================================
 # 01. STREAMLIT PAGE CONFIG
 # =============================================================================
-APP_BUILD_MARKER = "sme-reasoning-model-selector-2026-05-06-01"
+APP_BUILD_MARKER = "shareable-report-download-2026-05-06-01"
 
 st.set_page_config(
     page_title="Databricks + Fabric Expert Assistant" if os.getenv("ENABLE_FABRIC", "false").lower() == "true" else "Databricks Expert Assistant",
@@ -4129,6 +4129,7 @@ def regenerate_last_answer(k: int, answer_mode: str, product_mode: str) -> bool:
         "role": "assistant",
         "content": answer_with_links,
         "raw_content": answer,
+        "question": prompt_for_model,
         "sources": sources,
         "topic": topic,
         "intent": intent,
@@ -4320,6 +4321,196 @@ def render_evidence_summary(sources):
         """,
         unsafe_allow_html=True,
     )
+
+
+def report_file_slug(text: str, max_chars: int = 52) -> str:
+        slug = re.sub(r"[^a-zA-Z0-9]+", "-", (text or "report").strip().lower()).strip("-")
+        if not slug:
+                slug = "report"
+        return slug[:max_chars].strip("-") or "report"
+
+
+def source_rows_for_report(sources):
+        rows = []
+        seen = set()
+
+        for sid, title, url in sources or []:
+                key = url or title or sid
+                if key in seen:
+                        continue
+                seen.add(key)
+
+                url = url or ""
+                if url.startswith("playbook://"):
+                        source_kind = "Curated playbook"
+                elif url.startswith("internal_wiki://"):
+                        source_kind = "Internal TSG"
+                else:
+                        source_kind = "Docs / indexed source"
+
+                rows.append(
+                        {
+                                "sid": sid or "",
+                                "title": title or "Untitled source",
+                                "url": url,
+                                "kind": source_kind,
+                        }
+                )
+
+        return rows
+
+
+def build_shareable_report_html(question: str, answer: str, sources, topic: str = "", intent: str = "", answer_mode: str = "") -> str:
+    try:
+        generated_at = datetime.now(ZoneInfo(STATUS_DISPLAY_TIMEZONE_NAME)).strftime("%Y-%m-%d %I:%M %p %Z")
+    except Exception:
+        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %I:%M %p UTC")
+
+        summary = evidence_summary_for_sources(sources)
+        source_rows = source_rows_for_report(sources)
+        app_title = "Databricks + Fabric Expert Assistant" if ENABLE_FABRIC else "Databricks Expert Assistant"
+
+        source_items = []
+        for source in source_rows:
+                title = html.escape(source["title"])
+                sid = html.escape(source["sid"])
+                kind = html.escape(source["kind"])
+                url = source["url"]
+
+                if url and not url.startswith("playbook://"):
+                        safe_url = html.escape(url, quote=True)
+                        source_line = f'<a href="{safe_url}">{title}</a>'
+                else:
+                        source_line = title
+
+                source_items.append(
+                        f"""
+                        <li>
+                            <div class="source-title">{sid} {source_line}</div>
+                            <div class="source-kind">{kind}</div>
+                        </li>
+                        """
+                )
+
+        sources_html = "\n".join(source_items) if source_items else "<li>No retrieved sources were attached to this answer.</li>"
+        escaped_question = html.escape(question or "Question not captured for this report.")
+        escaped_answer = html.escape(answer or "")
+        escaped_topic = html.escape(topic or "not detected")
+        escaped_intent = html.escape(intent or "not detected")
+        escaped_mode = html.escape(answer_mode or "Auto")
+
+        return f"""<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{html.escape(app_title)} Report</title>
+    <style>
+        body {{
+            margin: 0;
+            background: #f6f8fb;
+            color: #111827;
+            font-family: "Segoe UI", Arial, sans-serif;
+            line-height: 1.55;
+        }}
+        .page {{
+            max-width: 920px;
+            margin: 0 auto;
+            padding: 32px 22px 48px;
+        }}
+        .header {{
+            border-radius: 8px;
+            background: #0b1220;
+            color: #f8fafc;
+            padding: 22px 24px;
+            border-bottom: 5px solid #2563eb;
+        }}
+        .kicker {{
+            color: #9bd7ff;
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }}
+        h1 {{ margin: 4px 0 8px; font-size: 28px; line-height: 1.2; }}
+        h2 {{ margin: 26px 0 10px; font-size: 18px; }}
+        .meta {{ color: #d9e5f2; font-size: 13px; }}
+        .box {{
+            background: #ffffff;
+            border: 1px solid #d7dde8;
+            border-radius: 8px;
+            padding: 16px 18px;
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+        }}
+        .answer {{ white-space: pre-wrap; }}
+        .evidence {{
+            margin-top: 14px;
+            border-left: 5px solid #2563eb;
+            background: #eff6ff;
+            color: #1e3a8a;
+        }}
+        ul.sources {{ padding-left: 22px; }}
+        ul.sources li {{ margin-bottom: 12px; }}
+        .source-title {{ font-weight: 700; }}
+        .source-kind {{ color: #5b677a; font-size: 13px; }}
+        a {{ color: #1d4ed8; }}
+        .footer {{ margin-top: 28px; color: #5b677a; font-size: 12px; }}
+    </style>
+</head>
+<body>
+    <main class="page">
+        <section class="header">
+            <div class="kicker">Shareable field report</div>
+            <h1>{html.escape(app_title)}</h1>
+            <div class="meta">Generated {html.escape(generated_at)} | Mode: {escaped_mode} | Topic: {escaped_topic} | Intent: {escaped_intent}</div>
+        </section>
+
+        <section>
+            <h2>Question</h2>
+            <div class="box">{escaped_question}</div>
+        </section>
+
+        <section>
+            <h2>Answer</h2>
+            <div class="box answer">{escaped_answer}</div>
+        </section>
+
+        <section>
+            <h2>Evidence</h2>
+            <div class="box evidence"><strong>Evidence quality: {html.escape(summary['level'])}.</strong> {html.escape(summary['note'])} Sources: {summary['official']} docs, {summary['internal']} internal, {summary['playbook']} playbook.</div>
+            <ul class="sources">{sources_html}</ul>
+        </section>
+
+        <section class="footer">
+            Generated from {html.escape(app_title)}. Review customer-facing language and source coverage before forwarding externally.
+        </section>
+    </main>
+</body>
+</html>"""
+
+
+def render_shareable_report_button(question: str, answer: str, sources, topic: str = "", intent: str = "", answer_mode: str = "", key_suffix: str = "latest"):
+        if not answer:
+                return
+
+        report_html = build_shareable_report_html(
+                question=question,
+                answer=answer,
+                sources=sources,
+                topic=topic,
+                intent=intent,
+                answer_mode=answer_mode,
+        )
+        timestamp = datetime.now(ZoneInfo(STATUS_DISPLAY_TIMEZONE_NAME)).strftime("%Y%m%d-%H%M")
+        file_name = f"expert-assistant-report-{timestamp}-{report_file_slug(question)}.html"
+
+        st.download_button(
+                "Download shareable report",
+                data=report_html.encode("utf-8"),
+                file_name=file_name,
+                mime="text/html",
+                key=f"share_report_{key_suffix}",
+                help="Download a clean HTML report with the question, answer, evidence summary, and source links.",
+        )
 
 
 def render_left_source_pane():
@@ -4740,12 +4931,25 @@ with st.expander("Example questions", expanded=False):
 
 render_readme_panel()
 
-for msg in st.session_state["messages"]:
+last_user_question_for_report = ""
+for msg_index, msg in enumerate(st.session_state["messages"]):
+    if msg["role"] == "user":
+        last_user_question_for_report = msg.get("raw_content") or msg.get("content", "")
+
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
         if msg["role"] == "assistant":
             render_evidence_summary(msg.get("sources", []))
+            render_shareable_report_button(
+                question=msg.get("question") or last_user_question_for_report,
+                answer=msg.get("raw_content") or msg.get("content", ""),
+                sources=msg.get("sources", []),
+                topic=msg.get("topic", ""),
+                intent=msg.get("intent", ""),
+                answer_mode=msg.get("answer_mode", ""),
+                key_suffix=f"history_{msg_index}",
+            )
 
         if msg["role"] == "assistant" and msg.get("sources"):
             unique_sources = []
@@ -4856,6 +5060,15 @@ if prompt or uploaded_files:
 
         st.markdown(answer_with_links)
         render_evidence_summary(sources)
+        render_shareable_report_button(
+            question=logged_user_content,
+            answer=answer,
+            sources=sources,
+            topic=topic,
+            intent=intent,
+            answer_mode=answer_mode,
+            key_suffix="live_answer",
+        )
 
         if sources:
             unique_sources = []
@@ -4883,6 +5096,7 @@ if prompt or uploaded_files:
             "role": "assistant",
             "content": answer_with_links,
             "raw_content": answer,
+            "question": logged_user_content,
             "sources": sources,
             "topic": topic,
             "intent": intent,
