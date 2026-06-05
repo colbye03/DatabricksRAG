@@ -2283,25 +2283,26 @@ def is_compare_request(text: str) -> bool:
 def product_signal_counts(text: str):
     text = (text or "").lower()
     fabric_terms = [
-        "microsoft fabric", "fabric", "onelake", "semantic model",
-        "capacity", "dataflow gen2", "real-time intelligence", "mirroring",
-        "shortcut", "fabric pipeline", "fabric lakehouse", "fabric warehouse",
-        "semantic layer", "semantic engine",
-        "deployment pipeline", "fabric spark", "spark pool",
+        "microsoft fabric", "fabric lakehouse", "fabric warehouse",
+        "onelake", "dataflow gen2", "real-time intelligence", "mirroring",
+        "shortcut", "fabric pipeline", "fabric spark", "spark pool",
         "custom pool", "workspace pool", "fabric environment",
+        "deployment pipeline", "capacity unit", "fabric capacity",
     ]
     databricks_terms = [
         "azure databricks", "databricks", "dbx", "cluster", "unity catalog", "dlt",
         "delta live tables", "auto loader", "sql warehouse", "photon", "dbsql",
         "lakeflow", "serving endpoint", "vector search", "metric views",
         "uc metric views", "ai/bi", "databricks connector",
+        "databricks runtime", "mlflow", "feature store",
     ]
     powerbi_terms = [
         "power bi", "powerbi", "power bi desktop", "power bi service",
         "semantic model", "dataset", "datasets", "dax", "power query",
         "m language", "pbix", "paginated report", "report builder",
         "gateway", "on-premises data gateway", "directquery", "import mode",
-        "composite model", "power bi connector",
+        "composite model", "power bi connector", "direct lake",
+        "semantic layer", "semantic engine",
     ]
 
     fabric_hits = sum(1 for term in fabric_terms if term in text)
@@ -3002,21 +3003,40 @@ def is_relevant_source(title: str, url: str, topic: str, product: str = "databri
     combined = f"{title} {url}".lower()
 
     if product == "fabric":
+        # Allow Databricks sources only if they explicitly discuss Fabric/PBI integration
         fabric_relevant_terms = [
             "fabric", "power bi", "powerbi", "semantic", "directquery",
             "direct lake", "import", "onelake", "databricks connector",
-            "azure databricks connector", "dax",
+            "azure databricks connector", "dax", "mirroring", "mirror",
+            "lakehouse federation", "partner connect",
         ]
-        if "docs.databricks.com" in combined and topic != "powerbi_semantic_architecture":
+        # Block docs.databricks.com unless the topic is about cross-product integration
+        if "docs.databricks.com" in combined and topic not in {"powerbi_semantic_architecture", "fabric_mirroring"}:
             return False
-        if "azure databricks" in combined and not any(term in combined for term in fabric_relevant_terms):
-            return False
+        # Block anything with Databricks-only terms that lacks Fabric/PBI relevance
+        databricks_only_indicators = [
+            "azure databricks", "databricks.com", "unity catalog",
+            "delta live tables", "dlt", "auto loader", "autoloader",
+            "dbsql", "sql warehouse", "photon", "databricks runtime",
+            "mlflow", "model serving", "feature store",
+        ]
+        if any(term in combined for term in databricks_only_indicators):
+            if not any(term in combined for term in fabric_relevant_terms):
+                return False
 
     if product == "powerbi":
         if "docs.databricks.com" in combined:
             return False
-        if "azure databricks" in combined and "power bi" not in combined and "powerbi" not in combined:
+        if "azure databricks" in combined and "power bi" not in combined and "powerbi" not in combined and "connector" not in combined:
             return False
+        # Also block Fabric-only content when specifically asking about Power BI
+        databricks_only_indicators = [
+            "unity catalog", "delta live tables", "dlt", "auto loader",
+            "sql warehouse", "photon", "databricks runtime", "mlflow",
+        ]
+        if any(term in combined for term in databricks_only_indicators):
+            if "power bi" not in combined and "powerbi" not in combined and "connector" not in combined:
+                return False
 
     if any(term in combined for term in cfg.get("bad_terms", [])):
         return False
@@ -3174,7 +3194,7 @@ def playbook_retrieve(topic: str, product: str = "databricks"):
     return rows
 
 
-def score_row_for_question(row, question: str, topic: str):
+def score_row_for_question(row, question: str, topic: str, product: str = "databricks"):
     title, url, text, raw_score, source_type = row
     q_terms = set(extract_keyword_terms(question, max_terms=14))
     combined = normalize_text_for_search(f"{title} {url} {text}")
@@ -3197,6 +3217,18 @@ def score_row_for_question(row, question: str, topic: str):
 
     if "learn.microsoft.com" in combined or "docs.databricks.com" in combined:
         score += 1.0
+
+    # Product-aware scoring: boost on-product sources, penalize off-product
+    if product == "fabric":
+        if "learn.microsoft.com/fabric" in combined or "learn.microsoft.com/power-bi" in combined:
+            score += 3.0
+        elif "docs.databricks.com" in combined:
+            score -= 4.0
+    elif product == "databricks":
+        if "docs.databricks.com" in combined or "learn.microsoft.com/azure/databricks" in combined:
+            score += 3.0
+        elif "learn.microsoft.com/fabric" in combined:
+            score -= 4.0
 
     if topic == "powerbi_semantic_architecture":
         for term in [
@@ -3266,7 +3298,7 @@ def hybrid_retrieve(question: str, k: int = FINAL_CONTEXT_K, product: str = "dat
 
     ranked = sorted(
         all_rows,
-        key=lambda r: score_row_for_question(r, question, topic),
+        key=lambda r: score_row_for_question(r, question, topic, product),
         reverse=True,
     )
 
@@ -4460,6 +4492,25 @@ def ask_databricks_sme(
             "- Treat customer objections as legitimate until proven otherwise; separate legitimate concern from competitive framing.\n\n"
         )
 
+    product_boundary_instruction = ""
+    if selected_product == "fabric":
+        product_boundary_instruction = (
+            "PRODUCT BOUNDARY ENFORCEMENT (Fabric route active):\n"
+            "- Answer using Microsoft Fabric and Power BI concepts, documentation, and sources ONLY.\n"
+            "- Do NOT cite or reference Databricks documentation (docs.databricks.com) unless the question specifically asks about Databricks-to-Fabric integration (e.g., mirroring, connectors).\n"
+            "- If a retrieved source is from Databricks docs and is not about Fabric integration, ignore it completely.\n"
+            "- Use learn.microsoft.com/fabric and learn.microsoft.com/power-bi sources preferentially.\n"
+            "- Do not explain Databricks-specific concepts (Unity Catalog, DLT, Photon, etc.) unless comparing or integrating.\n\n"
+        )
+    elif selected_product == "databricks":
+        product_boundary_instruction = (
+            "PRODUCT BOUNDARY ENFORCEMENT (Databricks route active):\n"
+            "- Answer using Azure Databricks concepts, documentation, and sources ONLY.\n"
+            "- Do NOT cite or reference Microsoft Fabric or Power BI documentation unless the question specifically asks about integration.\n"
+            "- If a retrieved source is from Fabric/Power BI docs and is not about Databricks integration, ignore it.\n"
+            "- Use docs.databricks.com and learn.microsoft.com/azure/databricks sources preferentially.\n\n"
+        )
+
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
@@ -4484,6 +4535,7 @@ def ask_databricks_sme(
                 f"{cli_rule}"
                 f"{answer_format}\n"
                 f"{competitive_output_gate}"
+                f"{product_boundary_instruction}"
                 "Be concise unless the user explicitly asks for hand-holding, end-to-end setup, full accuracy, question-by-question answers, or detailed troubleshooting. "
                 "Avoid restating prior answers. "
                 "If selected product route is Fabric, answer as a Microsoft Fabric SME and cite Fabric sources when available. Do not force Databricks concepts into Fabric unless the user asks for a Databricks comparison. "
