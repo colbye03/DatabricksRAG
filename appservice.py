@@ -747,7 +747,7 @@ def save_chat_to_local_storage(messages: list, session_id: str = ""):
             window.parent.localStorage.setItem("{LOCAL_STORAGE_SESSION_KEY}", {json.dumps(session_id or "")});
         }} catch(e) {{ console.warn("localStorage save failed:", e); }}
         </script>""",
-        height=0,
+        height=1,
     )
 
 
@@ -784,7 +784,7 @@ def inject_history_loader():
             bridge.dispatchEvent(new Event('change', { bubbles: true }));
         }})();
         </script>""",
-        height=0,
+        height=1,
     )
 
 
@@ -799,7 +799,7 @@ def render_history_bridge():
         key=LOCAL_STORAGE_BRIDGE_KEY,
         value="",
         label_visibility="collapsed",
-        height=0,
+        height=1,
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -830,7 +830,7 @@ def clear_local_storage():
         window.parent.localStorage.removeItem("{LOCAL_STORAGE_SESSION_KEY}");
         window.parent.__dbxHistoryLoaderRan = false;
         </script>""",
-        height=0,
+        height=1,
     )
 
 
@@ -1030,7 +1030,7 @@ def render_paste_screenshot_helper():
                 })();
                 </script>
             """,
-            height=0,
+            height=1,
             )
 
 
@@ -1049,7 +1049,7 @@ def render_scroll_to_latest_exchange_script():
         })();
         </script>
         """,
-        height=0,
+        height=1,
     )
 
 # =============================================================================

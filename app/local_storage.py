@@ -39,7 +39,7 @@ def save_chat_to_local_storage(messages: list, session_id: str = ""):
             window.parent.localStorage.setItem("{SESSION_STORAGE_KEY}", {json.dumps(session_id or "")});
         }} catch(e) {{ console.warn("localStorage save failed:", e); }}
         </script>""",
-        height=0,
+        height=1,
     )
 
 
@@ -76,7 +76,7 @@ def inject_history_loader():
             bridge.dispatchEvent(new Event('change', {{ bubbles: true }}));
         }})();
         </script>""",
-        height=0,
+        height=1,
     )
 
 
@@ -91,7 +91,7 @@ def render_history_bridge():
         key=BRIDGE_KEY,
         value="",
         label_visibility="collapsed",
-        height=0,
+        height=1,
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -122,5 +122,5 @@ def clear_local_storage():
         window.parent.localStorage.removeItem("{SESSION_STORAGE_KEY}");
         window.parent.__dbxHistoryLoaderRan = false;
         </script>""",
-        height=0,
+        height=1,
     )
