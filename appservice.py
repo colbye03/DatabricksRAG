@@ -1895,12 +1895,18 @@ TOPIC_CONFIG = {
             "outbound", "subnet", "nsg", "route table", "udr", "dns",
             "no public ip", "npip", "secure cluster connectivity",
             "storage firewall", "artifact", "artifacts",
+            "expressroute", "express route", "on-prem", "on premises", "on-premises",
+            "hub-spoke", "hub spoke", "vnet peering", "hybrid network",
+            "hybrid connectivity", "site-to-site", "vpn gateway",
+            "transit vnet", "network segmentation",
         ],
         "queries": [
             "{question}",
             "Azure Databricks network troubleshooting VNet NSG UDR NAT firewall DNS outbound",
             "Azure Databricks no public IP NAT Gateway NSG UDR firewall outbound artifacts",
             "Azure Databricks secure cluster connectivity network requirements firewall ports",
+            "Azure Databricks VNet injection ExpressRoute on-premises connectivity hub-spoke network architecture",
+            "Azure Databricks private endpoint networking VNet peering hybrid connectivity on-premises",
         ],
         "bad_terms": ["release-notes", "query-federation", "databricks-apps"],
     },
@@ -2176,32 +2182,94 @@ FORMAT_BY_INTENT = {
 # =============================================================================
 # 09. ROUTING
 # =============================================================================
-def detect_topic(question: str) -> str:
+
+# Keyword weights: multi-word phrases and domain acronyms get higher weight
+# than generic single words to avoid false-positive topic classification.
+KEYWORD_WEIGHTS = {
+    # compliance_architecture high-confidence
+    "compliance security profile": 5, "enhanced security and compliance": 5,
+    "compliance profile": 4, "security profile": 3, "hipaa": 4, "pci": 3,
+    "fedramp": 4, "fips": 3, "csp": 3, "regulated data": 3,
+    "workspace compliance": 3, "shared backend storage": 3,
+    "downstream impact": 3, "all-or-nothing": 3,
+    "workspace-scoped": 3, "workspace scoped": 3, "compliance boundary": 4,
+    # networking high-confidence
+    "private endpoint": 3, "nat gateway": 3, "secure cluster connectivity": 4,
+    "no public ip": 3, "npip": 3, "route table": 3, "expressroute": 4,
+    "express route": 4, "on-prem": 3, "on premises": 3, "on-premises": 3,
+    "hub-spoke": 3, "hub spoke": 3, "vnet peering": 3, "hybrid network": 3,
+    "hybrid connectivity": 3, "site-to-site": 3, "vpn gateway": 3,
+    "storage firewall": 3,
+    # fabric_mirroring high-confidence
+    "fabric mirroring": 5, "mirroring unity catalog": 5,
+    "unity catalog mirroring": 5, "mirror databricks to fabric": 5,
+    "mirrored database": 4, "fabric mirror": 4,
+    # adls_private_access high-confidence
+    "storage account private endpoint": 5, "adls private endpoint": 5,
+    "adls gen2 private endpoint": 5, "storage account private access": 5,
+    "public network access disabled": 4, "privatelink.dfs.core.windows.net": 5,
+    "privatelink.blob.core.windows.net": 5,
+    "delegated subnet": 3, "databricks_ui_api": 4, "browser_auth": 4,
+    # cluster_bootstrap high-confidence
+    "bootstrap error": 4, "bootstrap failed": 4, "cluster bootstrap": 4,
+    "cluster failed to start": 4, "cluster fails to start": 4,
+    "cluster startup failed": 4, "cluster not starting": 4,
+    "init script failed": 4, "cloud provider launch failure": 4,
+    # powerbi_semantic_architecture high-confidence
+    "direct lake": 4, "semantic model": 3, "composite model": 3,
+    "power bi connector": 4, "databricks connector": 3,
+    # lakeflow_ingestion
+    "lakeflow": 4, "error starting pipeline compute resources": 5,
+    # Generic single words get low weight
+    "network": 1, "vnet": 2, "subnet": 2, "nsg": 2, "udr": 2, "dns": 2,
+    "firewall": 2, "outbound": 1, "cluster": 1, "catalog": 1, "schema": 1,
+    "metastore": 2, "mirroring": 2, "shortcut": 1, "connector": 1,
+    "dax": 2, "rls": 2, "ols": 2, "ingestion": 1, "pipeline": 1,
+}
+
+
+def detect_topic_scored(question: str):
+    """Score-based topic detection. Returns (topic, confidence, score, matched_terms)."""
     q = question.lower()
 
-    ordered_topic_checks = [
-        ("compliance_architecture", TOPIC_CONFIG["compliance_architecture"]["keywords"]),
-        ("fabric_mirroring", TOPIC_CONFIG["fabric_mirroring"]["keywords"]),
-        ("adls_private_access", TOPIC_CONFIG["adls_private_access"]["keywords"]),
-        ("cluster_bootstrap", TOPIC_CONFIG["cluster_bootstrap"]["keywords"]),
-        ("powerbi_semantic_architecture", TOPIC_CONFIG["powerbi_semantic_architecture"]["keywords"]),
-        ("unity_catalog_setup", TOPIC_CONFIG["unity_catalog_setup"]["keywords"]),
-        ("lakeflow_ingestion", TOPIC_CONFIG["lakeflow_ingestion"]["keywords"]),
-        ("uc_external_storage", TOPIC_CONFIG["uc_external_storage"]["keywords"]),
-        ("unity_catalog", TOPIC_CONFIG["unity_catalog"]["keywords"]),
-        ("networking", TOPIC_CONFIG["networking"]["keywords"]),
-        ("spark_performance", TOPIC_CONFIG["spark_performance"]["keywords"]),
-        ("sql_warehouse", TOPIC_CONFIG["sql_warehouse"]["keywords"]),
-        ("model_serving", TOPIC_CONFIG["model_serving"]["keywords"]),
-        ("vector_search", TOPIC_CONFIG["vector_search"]["keywords"]),
-        ("architecture", TOPIC_CONFIG["architecture"]["keywords"]),
-    ]
+    topic_scores = {}
+    topic_matches = {}
 
-    for topic, keywords in ordered_topic_checks:
-        if any(keyword in q for keyword in keywords):
-            return topic
+    for topic_name, cfg in TOPIC_CONFIG.items():
+        if topic_name == "general":
+            continue
+        score = 0
+        matched = []
+        for kw in cfg["keywords"]:
+            if kw in q:
+                weight = KEYWORD_WEIGHTS.get(kw, 2)
+                score += weight
+                matched.append(kw)
+        if score > 0:
+            topic_scores[topic_name] = score
+            topic_matches[topic_name] = matched
 
-    return "general"
+    if not topic_scores:
+        return "general", "none", 0, []
+
+    best_topic = max(topic_scores, key=topic_scores.get)
+    best_score = topic_scores[best_topic]
+    best_matches = topic_matches[best_topic]
+
+    if best_score >= 6:
+        confidence = "high"
+    elif best_score >= 3:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    return best_topic, confidence, best_score, best_matches
+
+
+def detect_topic(question: str) -> str:
+    """Legacy wrapper - returns just the topic string."""
+    topic, confidence, score, _ = detect_topic_scored(question)
+    return topic
 
 
 def detect_product(question: str, attachment_context: str = "", product_mode: str = "Auto") -> str:
@@ -3210,15 +3278,21 @@ def playbook_retrieve(topic: str, product: str = "databricks"):
     return rows
 
 
-def score_row_for_question(row, question: str, topic: str, product: str = "databricks"):
+def score_row_for_question(row, question: str, topic: str, product: str = "databricks", topic_confidence: str = "high"):
     title, url, text, raw_score, source_type = row
     q_terms = set(extract_keyword_terms(question, max_terms=14))
     combined = normalize_text_for_search(f"{title} {url} {text}")
 
     score = 0.0
 
+    # Playbook boost is conditional on topic confidence
     if source_type == "playbook":
-        score += 10.0
+        if topic_confidence == "high":
+            score += 9.0
+        elif topic_confidence == "medium":
+            score += 5.0
+        else:
+            score += 2.0
     elif source_type == "keyword":
         score += 5.0
     elif source_type == "vector":
@@ -3258,9 +3332,17 @@ def score_row_for_question(row, question: str, topic: str, product: str = "datab
     return score
 
 
-def hybrid_retrieve(question: str, k: int = FINAL_CONTEXT_K, product: str = "databricks"):
-    topic = detect_topic(question)
-    intent = detect_intent(question)
+def hybrid_retrieve(question: str, k: int = FINAL_CONTEXT_K, product: str = "databricks", pre_topic: str = "", pre_intent: str = "", topic_confidence: str = ""):
+    # Use pre-detected topic/intent if provided (detected on original question)
+    if pre_topic:
+        topic = pre_topic
+    else:
+        topic = detect_topic(question)
+
+    if pre_intent:
+        intent = pre_intent
+    else:
+        intent = detect_intent(question)
 
     if product == "fabric" and topic == "general":
         fabric_text = question.lower()
@@ -3314,7 +3396,7 @@ def hybrid_retrieve(question: str, k: int = FINAL_CONTEXT_K, product: str = "dat
 
     ranked = sorted(
         all_rows,
-        key=lambda r: score_row_for_question(r, question, topic, product),
+        key=lambda r: score_row_for_question(r, question, topic, product, topic_confidence=topic_confidence or "medium"),
         reverse=True,
     )
 
@@ -4213,6 +4295,10 @@ def ask_databricks_sme(
 
     status_context = build_databricks_status_context(question)
 
+    # Detect topic/intent on ORIGINAL question (before LLM rewrite corrupts it)
+    orig_topic, orig_confidence, orig_score, orig_matches = detect_topic_scored(question)
+    orig_intent = detect_intent(question)
+
     retrieval_question = build_retrieval_question(
         question=question,
         chat_history=chat_history,
@@ -4220,7 +4306,26 @@ def ask_databricks_sme(
         product=selected_product,
     )
 
-    topic, intent, rows = hybrid_retrieve(retrieval_question, k=k, product=selected_product)
+    # Dual detection: also check the rewritten query for follow-up context
+    rewritten_topic, rewritten_confidence, rewritten_score, _ = detect_topic_scored(retrieval_question)
+
+    # Resolution: prefer original when it has signal; fall back to rewritten for ambiguous follow-ups
+    if orig_confidence in ("high", "medium") and orig_topic != "general":
+        final_topic = orig_topic
+        final_confidence = orig_confidence
+    elif orig_topic == "general" and rewritten_confidence in ("high", "medium") and rewritten_topic != "general":
+        # Original had no signal but rewrite did (likely a follow-up like "what about that?")
+        final_topic = rewritten_topic
+        final_confidence = rewritten_confidence
+    else:
+        final_topic = orig_topic if orig_topic != "general" else rewritten_topic
+        final_confidence = orig_confidence if orig_topic != "general" else rewritten_confidence
+
+    topic, intent, rows = hybrid_retrieve(
+        retrieval_question, k=k, product=selected_product,
+        pre_topic=final_topic, pre_intent=orig_intent,
+        topic_confidence=final_confidence,
+    )
     q_lower = question.lower()
     triage = screenshot_triage_metadata(attachment_context)
 

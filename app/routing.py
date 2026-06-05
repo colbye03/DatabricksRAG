@@ -5,32 +5,84 @@ import streamlit as st
 from app.config import ENABLE_FABRIC, ENABLE_POWERBI
 from app.topics import TOPIC_CONFIG
 
-def detect_topic(question: str) -> str:
+# Keyword weights for scored topic detection
+KEYWORD_WEIGHTS = {
+    "compliance security profile": 5, "enhanced security and compliance": 5,
+    "compliance profile": 4, "security profile": 3, "hipaa": 4, "pci": 3,
+    "fedramp": 4, "fips": 3, "csp": 3, "regulated data": 3,
+    "workspace compliance": 3, "shared backend storage": 3,
+    "downstream impact": 3, "all-or-nothing": 3,
+    "workspace-scoped": 3, "workspace scoped": 3, "compliance boundary": 4,
+    "private endpoint": 3, "nat gateway": 3, "secure cluster connectivity": 4,
+    "no public ip": 3, "npip": 3, "route table": 3, "expressroute": 4,
+    "express route": 4, "on-prem": 3, "on premises": 3, "on-premises": 3,
+    "hub-spoke": 3, "hub spoke": 3, "vnet peering": 3, "hybrid network": 3,
+    "hybrid connectivity": 3, "site-to-site": 3, "vpn gateway": 3,
+    "storage firewall": 3,
+    "fabric mirroring": 5, "mirroring unity catalog": 5,
+    "unity catalog mirroring": 5, "mirror databricks to fabric": 5,
+    "mirrored database": 4, "fabric mirror": 4,
+    "storage account private endpoint": 5, "adls private endpoint": 5,
+    "adls gen2 private endpoint": 5, "storage account private access": 5,
+    "public network access disabled": 4, "privatelink.dfs.core.windows.net": 5,
+    "privatelink.blob.core.windows.net": 5,
+    "delegated subnet": 3, "databricks_ui_api": 4, "browser_auth": 4,
+    "bootstrap error": 4, "bootstrap failed": 4, "cluster bootstrap": 4,
+    "cluster failed to start": 4, "cluster fails to start": 4,
+    "cluster startup failed": 4, "cluster not starting": 4,
+    "init script failed": 4, "cloud provider launch failure": 4,
+    "direct lake": 4, "semantic model": 3, "composite model": 3,
+    "power bi connector": 4, "databricks connector": 3,
+    "lakeflow": 4, "error starting pipeline compute resources": 5,
+    "network": 1, "vnet": 2, "subnet": 2, "nsg": 2, "udr": 2, "dns": 2,
+    "firewall": 2, "outbound": 1, "cluster": 1, "catalog": 1, "schema": 1,
+    "metastore": 2, "mirroring": 2, "shortcut": 1, "connector": 1,
+    "dax": 2, "rls": 2, "ols": 2, "ingestion": 1, "pipeline": 1,
+}
+
+
+def detect_topic_scored(question: str):
+    """Score-based topic detection. Returns (topic, confidence, score, matched_terms)."""
     q = question.lower()
 
-    ordered_topic_checks = [
-        ("powerbi_semantic_architecture", TOPIC_CONFIG["powerbi_semantic_architecture"]["keywords"]),
-        ("fabric_mirroring", TOPIC_CONFIG["fabric_mirroring"]["keywords"]),
-        ("adls_private_access", TOPIC_CONFIG["adls_private_access"]["keywords"]),
-        ("cluster_bootstrap", TOPIC_CONFIG["cluster_bootstrap"]["keywords"]),
-        ("compliance_architecture", TOPIC_CONFIG["compliance_architecture"]["keywords"]),
-        ("unity_catalog_setup", TOPIC_CONFIG["unity_catalog_setup"]["keywords"]),
-        ("lakeflow_ingestion", TOPIC_CONFIG["lakeflow_ingestion"]["keywords"]),
-        ("uc_external_storage", TOPIC_CONFIG["uc_external_storage"]["keywords"]),
-        ("unity_catalog", TOPIC_CONFIG["unity_catalog"]["keywords"]),
-        ("networking", TOPIC_CONFIG["networking"]["keywords"]),
-        ("spark_performance", TOPIC_CONFIG["spark_performance"]["keywords"]),
-        ("sql_warehouse", TOPIC_CONFIG["sql_warehouse"]["keywords"]),
-        ("model_serving", TOPIC_CONFIG["model_serving"]["keywords"]),
-        ("vector_search", TOPIC_CONFIG["vector_search"]["keywords"]),
-        ("architecture", TOPIC_CONFIG["architecture"]["keywords"]),
-    ]
+    topic_scores = {}
+    topic_matches = {}
 
-    for topic, keywords in ordered_topic_checks:
-        if any(keyword in q for keyword in keywords):
-            return topic
+    for topic_name, cfg in TOPIC_CONFIG.items():
+        if topic_name == "general":
+            continue
+        score = 0
+        matched = []
+        for kw in cfg["keywords"]:
+            if kw in q:
+                weight = KEYWORD_WEIGHTS.get(kw, 2)
+                score += weight
+                matched.append(kw)
+        if score > 0:
+            topic_scores[topic_name] = score
+            topic_matches[topic_name] = matched
 
-    return "general"
+    if not topic_scores:
+        return "general", "none", 0, []
+
+    best_topic = max(topic_scores, key=topic_scores.get)
+    best_score = topic_scores[best_topic]
+    best_matches = topic_matches[best_topic]
+
+    if best_score >= 6:
+        confidence = "high"
+    elif best_score >= 3:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    return best_topic, confidence, best_score, best_matches
+
+
+def detect_topic(question: str) -> str:
+    """Returns just the topic string using scored detection."""
+    topic, confidence, score, _ = detect_topic_scored(question)
+    return topic
 
 
 def detect_product(question: str, attachment_context: str = "", product_mode: str = "Auto") -> str:

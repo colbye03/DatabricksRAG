@@ -7,6 +7,19 @@ def test_detect_topic_matches_keywords():
     assert detect_topic("Compare Direct Lake and DirectQuery for a Power BI semantic model") == "powerbi_semantic_architecture"
 
 
+def test_detect_topic_networking():
+    """Networking questions should route to networking even if CSP is mentioned in passing."""
+    assert detect_topic("how to configure networking to remain connected to on-prem") == "networking"
+    assert detect_topic("ExpressRoute gateway for Databricks VNet") == "networking"
+    assert detect_topic("hub-spoke network architecture with private endpoints") == "networking"
+
+
+def test_detect_topic_compliance_vs_networking():
+    """CSP-specific questions should still route to compliance."""
+    assert detect_topic("How does the Compliance Security Profile affect my workspace?") == "compliance_architecture"
+    assert detect_topic("Is CSP HIPAA compliant?") == "compliance_architecture"
+
+
 def test_detect_intent_patterns():
     assert detect_intent("Prepare me for a customer call about Unity Catalog") == "meeting_prep"
     assert detect_intent("Explain this architecture in a deep explanation") == "deep_explanation"
