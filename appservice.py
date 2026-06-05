@@ -2180,11 +2180,11 @@ def detect_topic(question: str) -> str:
     q = question.lower()
 
     ordered_topic_checks = [
-        ("powerbi_semantic_architecture", TOPIC_CONFIG["powerbi_semantic_architecture"]["keywords"]),
+        ("compliance_architecture", TOPIC_CONFIG["compliance_architecture"]["keywords"]),
         ("fabric_mirroring", TOPIC_CONFIG["fabric_mirroring"]["keywords"]),
         ("adls_private_access", TOPIC_CONFIG["adls_private_access"]["keywords"]),
         ("cluster_bootstrap", TOPIC_CONFIG["cluster_bootstrap"]["keywords"]),
-        ("compliance_architecture", TOPIC_CONFIG["compliance_architecture"]["keywords"]),
+        ("powerbi_semantic_architecture", TOPIC_CONFIG["powerbi_semantic_architecture"]["keywords"]),
         ("unity_catalog_setup", TOPIC_CONFIG["unity_catalog_setup"]["keywords"]),
         ("lakeflow_ingestion", TOPIC_CONFIG["lakeflow_ingestion"]["keywords"]),
         ("uc_external_storage", TOPIC_CONFIG["uc_external_storage"]["keywords"]),
@@ -3267,7 +3267,7 @@ def hybrid_retrieve(question: str, k: int = FINAL_CONTEXT_K, product: str = "dat
         if any(term in fabric_text for term in ["mirror", "mirroring", "shortcut", "onelake"]):
             topic = "fabric_mirroring"
 
-    if product in {"fabric", "compare"}:
+    if product in {"fabric", "compare"} and topic == "general":
         semantic_text = question.lower()
         if any(term in semantic_text for term in [
             "direct lake", "directquery", "direct query", "import mode",
