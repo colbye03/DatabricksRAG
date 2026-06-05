@@ -6,6 +6,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from app.config import MAX_HISTORY_CHARS_PER_MESSAGE, MAX_HISTORY_MESSAGES, REASONING_MODEL
+from app.local_storage import try_restore_from_local_storage
 
 EXAMPLE_PLACEHOLDER = "Choose an example question..."
 
@@ -96,6 +97,10 @@ def init_chat_state():
     if "reasoning_model_endpoint" not in st.session_state:
         st.session_state["reasoning_model_endpoint"] = REASONING_MODEL
 
+    if not st.session_state["messages"] and not st.session_state.get("_ls_loaded"):
+        restored = try_restore_from_local_storage()
+        if restored:
+            st.session_state["messages"] = restored
 
 
 def truncate_text(text: str, max_chars: int) -> str:

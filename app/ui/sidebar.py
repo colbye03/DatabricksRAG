@@ -3,6 +3,7 @@ import uuid
 import streamlit as st
 
 import app.session as session_module
+from app.local_storage import BRIDGE_KEY, clear_local_storage
 from app.clients import CLIENT_INIT_ERROR
 from app.config import ENABLE_FABRIC, ENABLE_POWERBI, FINAL_CONTEXT_K, REASONING_MODEL, REASONING_MODEL_OPTIONS
 from app.rag import render_sidebar_status_card
@@ -155,6 +156,9 @@ def render_sidebar():
             st.session_state["messages"] = []
             st.session_state["session_id"] = str(uuid.uuid4())
             st.session_state["show_feedback_details"] = False
+            st.session_state["_ls_loaded"] = False
+
+            clear_local_storage()
 
             for key in [
                 "last_question",
@@ -174,6 +178,7 @@ def render_sidebar():
                 "_ui_product_mode",
                 "_ui_answer_mode",
                 "_ui_context_k",
+                BRIDGE_KEY,
             ]:
                 if key in st.session_state:
                     del st.session_state[key]

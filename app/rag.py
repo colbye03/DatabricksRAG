@@ -11,6 +11,7 @@ import streamlit as st
 from app.clients import CLIENT_INIT_ERROR, deploy_client, fabric_vs_index, powerbi_vs_index, vs_index
 from app.config import *
 from app.feedback import save_chat_message
+from app.local_storage import save_chat_to_local_storage
 from app.formats import FORMAT_BY_INTENT
 from app.prompts import SYSTEM_PROMPT
 from app.retrieval import (
@@ -777,6 +778,10 @@ def regenerate_last_answer(k: int, answer_mode: str, product_mode: str) -> bool:
         topic=topic,
         intent=intent,
         sources=sources,
+    )
+    save_chat_to_local_storage(
+        st.session_state["messages"],
+        st.session_state.get("session_id", ""),
     )
 
     st.session_state["last_answer"] = answer

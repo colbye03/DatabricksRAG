@@ -4,6 +4,7 @@ import app.session as session_module
 from app.attachments import extract_text_from_attachment
 from app.config import ENABLE_FABRIC, FEEDBACK_LOGGING_ENABLED, FINAL_CONTEXT_K, MAX_HISTORY_MESSAGES
 from app.feedback import render_feedback_controls, render_shareable_report_button, save_chat_message, save_feedback
+from app.local_storage import save_chat_to_local_storage
 from app.rag import ask_databricks_sme, regenerate_last_answer
 from app.routing import resolve_product_route
 from app.session import (
@@ -408,6 +409,10 @@ def render_chat():
             topic=topic,
             intent=intent,
             sources=sources,
+        )
+        save_chat_to_local_storage(
+            st.session_state["messages"],
+            st.session_state.get("session_id", ""),
         )
 
         st.session_state["last_question"] = logged_user_content

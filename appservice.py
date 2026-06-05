@@ -716,6 +716,124 @@ def queue_product_route_regeneration():
         st.session_state["pending_answer_mode_regeneration"] = True
 
 
+LOCAL_STORAGE_KEY = "dbx_expert_chat_history"
+LOCAL_STORAGE_SESSION_KEY = "dbx_expert_session_id"
+LOCAL_STORAGE_BRIDGE_KEY = "_ls_history_bridge"
+MAX_PERSISTED_MESSAGES = 50
+
+
+def save_chat_to_local_storage(messages: list, session_id: str = ""):
+    """Fire-and-forget save of chat messages to browser localStorage."""
+    slim = []
+    for message in messages[-MAX_PERSISTED_MESSAGES:]:
+        entry = {"role": message.get("role", "assistant"), "content": message.get("content", "")}
+
+        for field in ["raw_content", "topic", "intent", "answer_mode", "question"]:
+            if message.get(field):
+                entry[field] = message[field]
+
+        if message.get("sources"):
+            entry["sources"] = [
+                (source[0], source[1], "") if isinstance(source, (list, tuple)) and len(source) >= 3 else source
+                for source in message["sources"]
+            ]
+
+        slim.append(entry)
+
+    components.html(
+        f"""<script>
+        try {{
+            window.parent.localStorage.setItem("{LOCAL_STORAGE_KEY}", {json.dumps(json.dumps(slim))});
+            window.parent.localStorage.setItem("{LOCAL_STORAGE_SESSION_KEY}", {json.dumps(session_id or "")});
+        }} catch(e) {{ console.warn("localStorage save failed:", e); }}
+        </script>""",
+        height=0,
+    )
+
+
+def inject_history_loader():
+    """Inject JS that reads localStorage and populates the hidden bridge widget."""
+    if st.session_state.get("_ls_loaded"):
+        return
+
+    components.html(
+        f"""<script>
+        (function() {{
+            if (window.parent.__dbxHistoryLoaderRan) return;
+            window.parent.__dbxHistoryLoaderRan = true;
+
+            const stored = window.parent.localStorage.getItem("{LOCAL_STORAGE_KEY}");
+            if (!stored) return;
+
+            try {{
+                const messages = JSON.parse(stored);
+                if (!messages || !messages.length) return;
+            }} catch(e) {{
+                return;
+            }}
+
+            const bridge = window.parent.document.querySelector('textarea[aria-label="{LOCAL_STORAGE_BRIDGE_KEY}"]');
+            if (!bridge) return;
+
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                window.parent.HTMLTextAreaElement.prototype,
+                'value'
+            ).set;
+            nativeInputValueSetter.call(bridge, stored);
+            bridge.dispatchEvent(new Event('input', { bubbles: true }));
+            bridge.dispatchEvent(new Event('change', { bubbles: true }));
+        }})();
+        </script>""",
+        height=0,
+    )
+
+
+def render_history_bridge():
+    """Render the hidden bridge textarea that JS writes localStorage data into."""
+    st.markdown(
+        '<div style="position:absolute;left:-9999px;height:0;overflow:hidden;">',
+        unsafe_allow_html=True,
+    )
+    st.text_area(
+        LOCAL_STORAGE_BRIDGE_KEY,
+        key=LOCAL_STORAGE_BRIDGE_KEY,
+        value="",
+        label_visibility="collapsed",
+        height=0,
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def try_restore_from_local_storage() -> list:
+    """Check if the bridge has data and return parsed messages, or empty list."""
+    bridge_value = st.session_state.get(LOCAL_STORAGE_BRIDGE_KEY, "")
+    if not bridge_value or bridge_value.strip() == "":
+        return []
+
+    try:
+        messages = json.loads(bridge_value)
+        if isinstance(messages, list) and messages:
+            st.session_state[LOCAL_STORAGE_BRIDGE_KEY] = ""
+            st.session_state["_ls_loaded"] = True
+            return messages
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    return []
+
+
+def clear_local_storage():
+    """Render a component that clears the chat history from localStorage."""
+    components.html(
+        f"""<script>
+        window.parent.localStorage.removeItem("{LOCAL_STORAGE_KEY}");
+        window.parent.localStorage.removeItem("{LOCAL_STORAGE_SESSION_KEY}");
+        window.parent.__dbxHistoryLoaderRan = false;
+        </script>""",
+        height=0,
+    )
+
+
 def init_chat_state():
     if "session_id" not in st.session_state:
         st.session_state["session_id"] = str(uuid.uuid4())
@@ -744,7 +862,14 @@ def init_chat_state():
     if "reasoning_model_endpoint" not in st.session_state:
         st.session_state["reasoning_model_endpoint"] = REASONING_MODEL
 
+    if not st.session_state["messages"] and not st.session_state.get("_ls_loaded"):
+        restored = try_restore_from_local_storage()
+        if restored:
+            st.session_state["messages"] = restored
 
+
+render_history_bridge()
+inject_history_loader()
 init_chat_state()
 
 
@@ -4151,6 +4276,10 @@ def regenerate_last_answer(k: int, answer_mode: str, product_mode: str) -> bool:
         intent=intent,
         sources=sources,
     )
+    save_chat_to_local_storage(
+        st.session_state["messages"],
+        st.session_state.get("session_id", ""),
+    )
 
     st.session_state["last_answer"] = answer
     st.session_state["last_sources"] = sources
@@ -4702,6 +4831,9 @@ with st.sidebar:
         st.session_state["messages"] = []
         st.session_state["session_id"] = str(uuid.uuid4())
         st.session_state["show_feedback_details"] = False
+        st.session_state["_ls_loaded"] = False
+
+        clear_local_storage()
 
         for key in [
             "last_question",
@@ -4718,6 +4850,7 @@ with st.sidebar:
             "last_answer_with_links",
             "last_example_selection",
             "pending_example_prompt",
+            LOCAL_STORAGE_BRIDGE_KEY,
         ]:
             if key in st.session_state:
                 del st.session_state[key]
@@ -5111,6 +5244,10 @@ if prompt or uploaded_files:
         topic=topic,
         intent=intent,
         sources=sources,
+    )
+    save_chat_to_local_storage(
+        st.session_state["messages"],
+        st.session_state.get("session_id", ""),
     )
 
     st.session_state["last_question"] = logged_user_content
