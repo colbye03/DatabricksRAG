@@ -3,6 +3,7 @@ name: Build and deploy Python app to Azure Web App - staging
 on:
   push:
     branches:
+      - appservice
       - edcolby-microsoft/refactor-modular-app
   workflow_dispatch:
 
