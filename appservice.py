@@ -4495,40 +4495,40 @@ def build_shareable_report_html(question: str, answer: str, sources, topic: str 
     except Exception:
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %I:%M %p UTC")
 
-        summary = evidence_summary_for_sources(sources)
-        source_rows = source_rows_for_report(sources)
-        app_title = "Databricks + Fabric Expert Assistant" if ENABLE_FABRIC else "Databricks Expert Assistant"
+    summary = evidence_summary_for_sources(sources)
+    source_rows = source_rows_for_report(sources)
+    app_title = "Databricks + Fabric Expert Assistant" if ENABLE_FABRIC else "Databricks Expert Assistant"
 
-        source_items = []
-        for source in source_rows:
-                title = html.escape(source["title"])
-                sid = html.escape(source["sid"])
-                kind = html.escape(source["kind"])
-                url = source["url"]
+    source_items = []
+    for source in source_rows:
+        title = html.escape(source["title"])
+        sid = html.escape(source["sid"])
+        kind = html.escape(source["kind"])
+        url = source["url"]
 
-                if url and not url.startswith("playbook://"):
-                        safe_url = html.escape(url, quote=True)
-                        source_line = f'<a href="{safe_url}">{title}</a>'
-                else:
-                        source_line = title
+        if url and not url.startswith("playbook://"):
+            safe_url = html.escape(url, quote=True)
+            source_line = f'<a href="{safe_url}">{title}</a>'
+        else:
+            source_line = title
 
-                source_items.append(
-                        f"""
-                        <li>
-                            <div class="source-title">{sid} {source_line}</div>
-                            <div class="source-kind">{kind}</div>
-                        </li>
-                        """
-                )
+        source_items.append(
+            f"""
+            <li>
+                <div class="source-title">{sid} {source_line}</div>
+                <div class="source-kind">{kind}</div>
+            </li>
+            """
+        )
 
-        sources_html = "\n".join(source_items) if source_items else "<li>No retrieved sources were attached to this answer.</li>"
-        escaped_question = html.escape(question or "Question not captured for this report.")
-        escaped_answer = html.escape(answer or "")
-        escaped_topic = html.escape(topic or "not detected")
-        escaped_intent = html.escape(intent or "not detected")
-        escaped_mode = html.escape(answer_mode or "Auto")
+    sources_html = "\n".join(source_items) if source_items else "<li>No retrieved sources were attached to this answer.</li>"
+    escaped_question = html.escape(question or "Question not captured for this report.")
+    escaped_answer = html.escape(answer or "")
+    escaped_topic = html.escape(topic or "not detected")
+    escaped_intent = html.escape(intent or "not detected")
+    escaped_mode = html.escape(answer_mode or "Auto")
 
-        return f"""<!doctype html>
+    return f"""<!doctype html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
