@@ -780,8 +780,8 @@ def inject_history_loader():
                 'value'
             ).set;
             nativeInputValueSetter.call(bridge, stored);
-            bridge.dispatchEvent(new Event('input', { bubbles: true }));
-            bridge.dispatchEvent(new Event('change', { bubbles: true }));
+            bridge.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            bridge.dispatchEvent(new Event('change', {{ bubbles: true }}));
         }})();
         </script>""",
         height=1,
