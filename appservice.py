@@ -5083,8 +5083,6 @@ with st.sidebar:
             "last_answer_with_links",
             "last_example_selection",
             "pending_example_prompt",
-            LOCAL_STORAGE_BRIDGE_KEY,
-            LOCAL_STORAGE_SESSIONS_BRIDGE_KEY,
         ]:
             if key in st.session_state:
                 del st.session_state[key]
@@ -5124,8 +5122,6 @@ with st.sidebar:
                     "last_answer_with_links",
                     "last_example_selection",
                     "pending_example_prompt",
-                    LOCAL_STORAGE_BRIDGE_KEY,
-                    LOCAL_STORAGE_SESSIONS_BRIDGE_KEY,
                 ]:
                     if key in st.session_state:
                         del st.session_state[key]
@@ -5269,8 +5265,6 @@ with st.sidebar:
             "last_answer_with_links",
             "last_example_selection",
             "pending_example_prompt",
-            LOCAL_STORAGE_BRIDGE_KEY,
-            LOCAL_STORAGE_SESSIONS_BRIDGE_KEY,
         ]:
             if key in st.session_state:
                 del st.session_state[key]
