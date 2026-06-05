@@ -2283,9 +2283,9 @@ def is_compare_request(text: str) -> bool:
 def product_signal_counts(text: str):
     text = (text or "").lower()
     fabric_terms = [
-        "microsoft fabric", "fabric lakehouse", "fabric warehouse",
-        "onelake", "dataflow gen2", "real-time intelligence", "mirroring",
-        "shortcut", "fabric pipeline", "fabric spark", "spark pool",
+        "microsoft fabric", "fabric", "onelake", "dataflow gen2",
+        "real-time intelligence", "mirroring", "shortcut", "fabric pipeline",
+        "fabric lakehouse", "fabric warehouse", "fabric spark", "spark pool",
         "custom pool", "workspace pool", "fabric environment",
         "deployment pipeline", "capacity unit", "fabric capacity",
     ]
@@ -3001,6 +3001,22 @@ def embed_query(text: str):
 def is_relevant_source(title: str, url: str, topic: str, product: str = "databricks") -> bool:
     cfg = TOPIC_CONFIG.get(topic, {})
     combined = f"{title} {url}".lower()
+
+    if product == "databricks":
+        # Block PBI/Fabric-only sources that leaked into the Databricks index
+        pbi_fabric_only_indicators = [
+            "learn.microsoft.com/fabric", "learn.microsoft.com/power-bi",
+            "power bi service", "power bi desktop", "semantic model",
+            "direct lake", "dataflow gen2", "paginated report",
+            "report builder", "power query", "dax ",
+        ]
+        databricks_integration_terms = [
+            "databricks", "connector", "unity catalog", "lakehouse federation",
+            "partner connect", "mirroring",
+        ]
+        if any(term in combined for term in pbi_fabric_only_indicators):
+            if not any(term in combined for term in databricks_integration_terms):
+                return False
 
     if product == "fabric":
         # Allow Databricks sources only if they explicitly discuss Fabric/PBI integration
