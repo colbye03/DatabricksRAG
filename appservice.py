@@ -936,7 +936,15 @@ def inject_history_loader():
 def render_history_bridge():
     """Render hidden bridge textareas that JS writes localStorage data into."""
     st.markdown(
-        '<div style="position:absolute;left:-9999px;height:1px;overflow:hidden;">',
+        f"""<style>
+        div:has(> textarea[aria-label="{LOCAL_STORAGE_BRIDGE_KEY}"]),
+        div:has(> textarea[aria-label="{LOCAL_STORAGE_SESSIONS_BRIDGE_KEY}"]) {{
+            position: absolute !important;
+            left: -9999px !important;
+            height: 0px !important;
+            overflow: hidden !important;
+        }}
+        </style>""",
         unsafe_allow_html=True,
     )
     st.text_area(
@@ -953,7 +961,6 @@ def render_history_bridge():
         label_visibility="collapsed",
         height=1,
     )
-    st.markdown('</div>', unsafe_allow_html=True)
 
 
 def try_restore_from_local_storage() -> list:
