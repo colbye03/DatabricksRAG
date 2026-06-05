@@ -1,11 +1,17 @@
-import uuid
-
 import streamlit as st
 
 import app.session as session_module
-from app.local_storage import BRIDGE_KEY, clear_local_storage
 from app.clients import CLIENT_INIT_ERROR
 from app.config import ENABLE_FABRIC, ENABLE_POWERBI, FINAL_CONTEXT_K, REASONING_MODEL, REASONING_MODEL_OPTIONS
+from app.local_storage import (
+    BRIDGE_KEY,
+    SESSIONS_BRIDGE_KEY,
+    clear_current_chat,
+    format_chat_session_label,
+    get_chat_sessions_for_sidebar,
+    start_new_chat,
+    switch_chat_session,
+)
 from app.rag import render_sidebar_status_card
 from app.session import (
     CHAT_INPUT_FILE_SUPPORT,
@@ -14,6 +20,33 @@ from app.session import (
     queue_reasoning_model_regeneration,
 )
 from app.ui.styles import APP_BUILD_MARKER
+
+
+CHAT_STATE_RESET_KEYS = [
+    "last_question",
+    "last_answer",
+    "last_sources",
+    "last_topic",
+    "last_intent",
+    "last_answer_mode",
+    "last_product_route",
+    "last_prompt_for_model",
+    "last_attachment_context",
+    "last_chat_history",
+    "pending_answer_mode_regeneration",
+    "last_answer_with_links",
+    "last_example_selection",
+    "pending_example_prompt",
+    BRIDGE_KEY,
+    SESSIONS_BRIDGE_KEY,
+]
+
+
+def _reset_chat_view_state():
+    st.session_state["show_feedback_details"] = False
+    for key in CHAT_STATE_RESET_KEYS:
+        if key in st.session_state:
+            del st.session_state[key]
 
 
 def render_sidebar():
@@ -33,6 +66,35 @@ def render_sidebar():
             st.caption(CLIENT_INIT_ERROR)
         else:
             st.success("Connected to Databricks")
+
+        st.subheader("Chats")
+        if st.button("\u2795 New Chat", use_container_width=True):
+            start_new_chat()
+            _reset_chat_view_state()
+            st.rerun()
+
+        chat_sessions = get_chat_sessions_for_sidebar(limit=10)
+        if chat_sessions:
+            session_lookup = {session["id"]: session for session in chat_sessions}
+            current_session_id = st.session_state.get("session_id", "")
+            current_option = current_session_id if current_session_id in session_lookup else chat_sessions[0]["id"]
+            if st.session_state.get("chat_session_selector") not in session_lookup:
+                st.session_state["chat_session_selector"] = current_option
+
+            selected_session_id = st.radio(
+                "Previous chats",
+                options=[session["id"] for session in chat_sessions],
+                format_func=lambda session_id: format_chat_session_label(session_lookup[session_id]),
+                key="chat_session_selector",
+                label_visibility="collapsed",
+            )
+
+            if selected_session_id != current_session_id:
+                if switch_chat_session(selected_session_id):
+                    _reset_chat_view_state()
+                    st.rerun()
+        else:
+            st.caption("No saved chats yet.")
 
         st.header("Settings")
 
@@ -144,7 +206,7 @@ def render_sidebar():
             )
 
             session_module.sidebar_uploaded_file = st.file_uploader(
-                "📎 Attach screenshot/file for next message",
+                "\U0001F4CE Attach screenshot/file for next message",
                 type=["png", "jpg", "jpeg", "txt", "log", "json", "sql", "py", "yml", "yaml", "md", "csv"],
                 accept_multiple_files=True,
             )
@@ -153,42 +215,13 @@ def render_sidebar():
                 st.info(f"{len(session_module.sidebar_uploaded_file)} attachment{'s' if len(session_module.sidebar_uploaded_file) != 1 else ''} ready for next message.")
 
         if st.button("Clear chat", use_container_width=True):
-            st.session_state["messages"] = []
-            st.session_state["session_id"] = str(uuid.uuid4())
-            st.session_state["show_feedback_details"] = False
-            st.session_state["_ls_loaded"] = False
-
-            clear_local_storage()
-
-            for key in [
-                "last_question",
-                "last_answer",
-                "last_sources",
-                "last_topic",
-                "last_intent",
-                "last_answer_mode",
-                "last_product_route",
-                "last_prompt_for_model",
-                "last_attachment_context",
-                "last_chat_history",
-                "pending_answer_mode_regeneration",
-                "last_answer_with_links",
-                "last_example_selection",
-                "pending_example_prompt",
-                "_ui_product_mode",
-                "_ui_answer_mode",
-                "_ui_context_k",
-                BRIDGE_KEY,
-            ]:
-                if key in st.session_state:
-                    del st.session_state[key]
-
+            clear_current_chat()
+            _reset_chat_view_state()
             st.rerun()
 
         with st.expander("Build info", expanded=False):
             st.caption(f"Build: `{APP_BUILD_MARKER}`")
             st.caption(f"Reasoning model: `{st.session_state.get('reasoning_model_endpoint', REASONING_MODEL)}`")
-
 
     st.session_state["_ui_product_mode"] = product_mode
     st.session_state["_ui_answer_mode"] = answer_mode

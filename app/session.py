@@ -76,6 +76,9 @@ def init_chat_state():
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
+    if "chat_sessions" not in st.session_state:
+        st.session_state["chat_sessions"] = []
+
     if "show_feedback_details" not in st.session_state:
         st.session_state["show_feedback_details"] = False
 
@@ -260,7 +263,7 @@ def render_paste_screenshot_helper():
                 })();
                 </script>
             """,
-            height=0,
+            height=1,
             )
 
 
@@ -279,5 +282,5 @@ def render_scroll_to_latest_exchange_script():
         })();
         </script>
         """,
-        height=0,
+        height=1,
     )
