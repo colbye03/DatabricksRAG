@@ -431,6 +431,7 @@ ENABLE_KEYWORD_SEARCH = os.getenv("ENABLE_KEYWORD_SEARCH", "true").lower() == "t
 ENABLE_PLAYBOOKS = os.getenv("ENABLE_PLAYBOOKS", "true").lower() == "true"
 ENABLE_FABRIC = os.getenv("ENABLE_FABRIC", "false").lower() == "true"
 ENABLE_POWERBI = os.getenv("ENABLE_POWERBI", "false").lower() == "true"
+ENABLE_JUDGE = os.getenv("ENABLE_JUDGE", "true").lower() == "true"
 
 # =============================================================================
 # 03. DATABRICKS AUTH
@@ -4413,6 +4414,8 @@ def ask_databricks_sme(
         intent = "deep_troubleshooting" if triage else "troubleshooting"
 
     context, sources = build_context(rows)
+    # Store context for inline judge evaluation
+    st.session_state["_last_retrieved_context"] = context
     if status_context:
         context = f"{status_context}\n\n{context}" if context else status_context
         sources = [("status", "Databricks status page", DATABRICKS_STATUS_SUMMARY_URL)] + sources
@@ -4687,6 +4690,130 @@ def ask_databricks_sme(
         )
 
     return answer, sources, topic, intent
+
+
+# =============================================================================
+# INLINE ANSWER JUDGE
+# =============================================================================
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "")  # optional separate model; falls back to CHAT_MODEL
+
+JUDGE_PROMPT = """You are an expert quality judge for a RAG-powered technical assistant.
+Evaluate the assistant's answer against the retrieved context and user question.
+
+Score each dimension from 1-5:
+- **Groundedness**: Is every claim in the answer supported by the retrieved context? (1=fabricated, 5=fully grounded)
+- **Relevance**: Does the answer directly address the user's question? (1=off-topic, 5=precisely answers)
+- **Completeness**: Does the answer cover the key aspects the user needs? (1=missing critical info, 5=comprehensive)
+- **Source Fidelity**: Are cited sources actually relevant to the claims they support? (1=wrong sources, 5=perfect citations)
+
+Return ONLY a JSON object with this exact format, no other text:
+{"groundedness": <1-5>, "relevance": <1-5>, "completeness": <1-5>, "source_fidelity": <1-5>, "overall": <1-5>, "flag": "<none|low_quality|hallucination>", "reason": "<one sentence if flag is not none>"}
+
+Rules:
+- "overall" is the minimum of the four dimension scores.
+- Set flag to "hallucination" if groundedness <= 2.
+- Set flag to "low_quality" if overall <= 2.
+- Set flag to "none" otherwise.
+- Be strict: if a claim has no supporting source, groundedness must drop."""
+
+
+def judge_answer(question: str, answer: str, context: str, sources: list) -> dict:
+    """Run inline judge on a generated answer. Returns score dict or None on failure."""
+    if deploy_client is None:
+        return None
+
+    source_text = "\n".join([f"- {title} ({url})" for _, title, url in sources]) if sources else "No sources"
+
+    messages = [
+        {"role": "system", "content": JUDGE_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"USER QUESTION:\n{question}\n\n"
+                f"RETRIEVED CONTEXT:\n{context[:6000]}\n\n"
+                f"SOURCES:\n{source_text}\n\n"
+                f"ASSISTANT ANSWER:\n{answer[:4000]}\n\n"
+                "Judge this answer now."
+            ),
+        },
+    ]
+
+    judge_model = JUDGE_MODEL or CHAT_MODEL
+    try:
+        response = deploy_client.predict(endpoint=judge_model, inputs={"messages": messages})
+        result_text = extract_model_text(response)
+        parsed = extract_json_object(result_text)
+        if parsed and isinstance(parsed, dict) and "groundedness" in parsed:
+            for key in ["groundedness", "relevance", "completeness", "source_fidelity", "overall"]:
+                val = parsed.get(key)
+                if isinstance(val, (int, float)) and 1 <= val <= 5:
+                    continue
+                parsed[key] = 3  # default if missing/invalid
+            return parsed
+    except Exception:
+        pass
+    return None
+
+
+def render_judge_badge(judge_result: dict):
+    """Render the judge score as an inline badge below the answer."""
+    if not judge_result:
+        return
+
+    overall = judge_result.get("overall", 3)
+    groundedness = judge_result.get("groundedness", 3)
+    relevance = judge_result.get("relevance", 3)
+    completeness = judge_result.get("completeness", 3)
+    source_fidelity = judge_result.get("source_fidelity", 3)
+    flag = judge_result.get("flag", "none")
+    reason = judge_result.get("reason", "")
+
+    if overall >= 4:
+        badge_color = "#16a34a"  # green
+        badge_bg = "#f0fdf4"
+        badge_icon = "✅"
+        badge_label = "High Quality"
+    elif overall >= 3:
+        badge_color = "#d97706"  # amber
+        badge_bg = "#fffbeb"
+        badge_icon = "⚡"
+        badge_label = "Moderate Quality"
+    else:
+        badge_color = "#dc2626"  # red
+        badge_bg = "#fef2f2"
+        badge_icon = "⚠️"
+        badge_label = "Low Quality"
+
+    if flag == "hallucination":
+        badge_color = "#dc2626"
+        badge_bg = "#fef2f2"
+        badge_icon = "🚨"
+        badge_label = "Possible Hallucination"
+
+    scores_html = (
+        f"Groundedness: {groundedness}/5 &nbsp;|&nbsp; "
+        f"Relevance: {relevance}/5 &nbsp;|&nbsp; "
+        f"Completeness: {completeness}/5 &nbsp;|&nbsp; "
+        f"Source Fidelity: {source_fidelity}/5"
+    )
+
+    warning_html = ""
+    if flag != "none" and reason:
+        warning_html = f'<div style="margin-top:4px;color:{badge_color};font-size:12px;">⚠ {html.escape(reason)}</div>'
+
+    st.markdown(
+        f"""<div style="
+            display:inline-flex;align-items:center;gap:6px;
+            background:{badge_bg};border:1px solid {badge_color}33;
+            border-radius:6px;padding:6px 12px;margin:8px 0 4px 0;
+            font-size:13px;color:{badge_color};
+        ">
+            <span style="font-size:15px;">{badge_icon}</span>
+            <strong>{badge_label}</strong>
+            <span style="color:#5b677a;margin-left:8px;">{scores_html}</span>
+        </div>{warning_html}""",
+        unsafe_allow_html=True,
+    )
 
 
 def regenerate_last_answer(k: int, answer_mode: str, product_mode: str) -> bool:
@@ -5608,6 +5735,10 @@ for msg_index, msg in enumerate(st.session_state["messages"]):
         st.markdown(msg["content"])
 
         if msg["role"] == "assistant":
+            # Render stored judge badge for historical messages
+            stored_judge = msg.get("judge_result")
+            if stored_judge:
+                render_judge_badge(stored_judge)
             render_evidence_summary(msg.get("sources", []))
             render_shareable_report_button(
                 question=msg.get("question") or last_user_question_for_report,
@@ -5727,6 +5858,17 @@ if prompt or uploaded_files:
             answer_with_links = add_clickable_citations(answer, sources)
 
         st.markdown(answer_with_links)
+
+        # Inline Judge evaluation
+        judge_context = st.session_state.get("_last_retrieved_context", "")
+        if ENABLE_JUDGE and judge_context and answer and sources:
+            with st.spinner("🔍 Evaluating answer quality..."):
+                judge_result = judge_answer(logged_user_content, answer, judge_context, sources)
+            if judge_result:
+                render_judge_badge(judge_result)
+                # Store judge result with the message
+                st.session_state["_last_judge_result"] = judge_result
+
         render_evidence_summary(sources)
         render_shareable_report_button(
             question=logged_user_content,
@@ -5769,6 +5911,7 @@ if prompt or uploaded_files:
             "topic": topic,
             "intent": intent,
             "answer_mode": answer_mode,
+            "judge_result": st.session_state.get("_last_judge_result"),
         }
     )
 
